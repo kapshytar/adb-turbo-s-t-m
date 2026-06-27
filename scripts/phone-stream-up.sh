@@ -23,11 +23,13 @@ pick_wifi() {
   [ -n "$ep" ] && "$ADB" connect "$ep" >/dev/null 2>&1
   "$ADB" devices | awk '/\tdevice$/{print $1}' | grep -E '_adb-tls|:' | head -1
 }
-if [ "${1:-}" = "usb" ] || [ "${FORCE_USB:-}" = "1" ]; then
-  DEV=$(pick_usb); [ -z "$DEV" ] && DEV=$(pick_wifi); MODE="USB (турбо)"
-else
-  DEV=$(pick_wifi); [ -z "$DEV" ] && DEV=$(pick_usb); MODE="Wi-Fi"
-fi
+TRANSPORT="${1:-auto}"
+[ "${FORCE_USB:-}" = "1" ] && TRANSPORT="usb"
+case "$TRANSPORT" in
+  usb)  DEV=$(pick_usb);  [ -z "$DEV" ] && DEV=$(pick_wifi); MODE="USB (турбо)" ;;
+  wifi) DEV=$(pick_wifi); [ -z "$DEV" ] && DEV=$(pick_usb);  MODE="Wi-Fi" ;;
+  *)    DEV=$(pick_usb);  if [ -n "$DEV" ]; then MODE="USB (авто)"; else DEV=$(pick_wifi); MODE="Wi-Fi (авто)"; fi ;;
+esac
 [ -z "$DEV" ] && { echo "Нет adb-устройства (ни Wi-Fi, ни USB). Включи телефон/Wireless debugging."; exit 1; }
 echo "adb-устройство: $DEV  [$MODE]"
 
