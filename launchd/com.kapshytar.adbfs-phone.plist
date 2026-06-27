@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kapshytar.adbfs-phone</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/v/PhoneAsExtStorage/adbfs-rootless/launchd/adbfs-launchd-run.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Перезапускать только если процесс упал (exit != 0).
+         Если телефон не найден — обёртка выходит 0, перезапуска нет. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/adbfs-phone.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/adbfs-phone.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Переменные среды для adb/adbfs -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/v</string>
+        <key>PATH</key>
+        <string>/Users/v/Library/Android/sdk/platform-tools:/usr/local/bin:/usr/bin:/bin</string>
+        <key>ADBFS_ROOT</key>
+        <string>/storage/emulated/0</string>
+    </dict>
+
+</dict>
+</plist>
