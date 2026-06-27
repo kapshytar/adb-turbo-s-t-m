@@ -7,6 +7,14 @@ RCLONE=/usr/local/bin/rclone
 MNT="$HOME/PhoneStream"
 PORT=8022
 
+# single-instance lock (атомарный mkdir) — защита от гонки/множественных вызовов из трея,
+# чтобы повторные нажатия Mount не плодили rclone-демонов.
+LOCK="/tmp/phonestream.up.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  echo "Операция монтирования уже идёт — подожди."; exit 0
+fi
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
+
 # уже смонтировано и живо?
 if mount | grep -q " $MNT " && ls "$MNT" >/dev/null 2>&1; then
   exit 0
@@ -17,7 +25,7 @@ fi
 pkill -f "rclone mount phone:" 2>/dev/null
 sleep 1
 if mount | grep -q " $MNT "; then diskutil unmount force "$MNT" >/dev/null 2>&1; fi
-rm -rf "$MNT" 2>/dev/null
+rmdir "$MNT" 2>/dev/null   # ВАЖНО: rmdir, НЕ rm -rf — на смонтированной точке rm -rf удалял бы файлы телефона
 
 # 1) выбрать adb-устройство.
 #    По умолчанию Wi-Fi-ПЕРВЫМ (стабильно для стоящего сервера на настенной зарядке;
@@ -49,13 +57,18 @@ echo "adb-устройство: $DEV  [$MODE]"
 
 # 3) sshd на телефоне отвечает?
 if ! nc -z -G 3 127.0.0.1 $PORT 2>/dev/null; then
-  echo "sshd на телефоне не отвечает. Запусти в Termux: sshd"
+  echo "Проброс порта недоступен (adb forward). Переподключи телефон."
   exit 1
+fi
+# nc видит локальный adb-forward даже если sshd на телефоне мёртв — поэтому проверяем РЕАЛЬНЫЙ SSH:
+if ! "$RCLONE" lsd phone: --timeout 6s --contimeout 6s --low-level-retries 1 >/dev/null 2>&1; then
+  echo "sshd на телефоне не запущен. Запусти его: на телефоне тапни виджет «Start-SSHD» (Termux:Widget) или открой Termux и выполни ./sshd-on.sh — затем нажми Mount снова."
+  exit 2
 fi
 
 # 4) (пере)монтировать
 if mount | grep -q " $MNT "; then diskutil unmount force "$MNT" >/dev/null 2>&1; fi
-rm -rf "$MNT"; mkdir -p "$MNT"
+rmdir "$MNT" 2>/dev/null; mkdir -p "$MNT"
 "$RCLONE" mount phone:storage/shared "$MNT" \
   --vfs-cache-mode writes --vfs-read-chunk-streams 8 --vfs-read-chunk-size 8M \
   --dir-cache-time 12h --volname Phone-Stream --no-modtime \
