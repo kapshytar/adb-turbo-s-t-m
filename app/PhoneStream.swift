@@ -1,21 +1,20 @@
 import Cocoa
 
-// Menu-bar app: двойной маунт телефона как двух независимых томов (rclone + sftp + Termux sshd).
-// USB  → ~/Phone-USB  (порт 8022, volname "Phone USB")
-// Wi-Fi → ~/Phone-WiFi (порт 8023, volname "Phone WiFi")
+// Menu-bar app: mount the phone as independent volumes (rclone + sftp + Termux sshd),
+// plus a Connection Center for the 4 channels (USB / Wi-Fi SSH / Wireless-debug / adb 5555).
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
     let adb = NSString(string: "~/Library/Android/sdk/platform-tools/adb").expandingTildeInPath
     var busy = false
-    var failed = Set<String>()   // каналы, где последняя попытка подключения не удалась (красные)
+    var failed = Set<String>()   // channels whose last connect attempt failed (shown red)
 
-    // ---- пути к скриптам из бандла ----
+    // ---- bundled script paths ----
     var mountScript:    String { (Bundle.main.resourcePath ?? "") + "/phone-mount.sh" }
     var unmountScript:  String { (Bundle.main.resourcePath ?? "") + "/phone-unmount.sh" }
     var mountAllScript: String { (Bundle.main.resourcePath ?? "") + "/phone-mount-all.sh" }
     var rediscoverScript: String { (Bundle.main.resourcePath ?? "") + "/phone-rediscover.sh" }
 
-    // ---- точки маунта ----
+    // ---- mount points ----
     let mntUSB  = NSString(string: "~/Phone-USB").expandingTildeInPath
     let mntWiFi = NSString(string: "~/Phone-WiFi").expandingTildeInPath
 
@@ -27,11 +26,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             statusItem.button?.image = img
         } else { statusItem.button?.title = "📱" }
         let menu = NSMenu(); menu.delegate = self; statusItem.menu = menu
-        startKeepalive()   // пока трей запущен — keepalive держит USB-связь горячей
+        startKeepalive()   // keep the USB link hot while the tray runs
     }
     func applicationWillTerminate(_ note: Notification) { stopKeepalive() }
 
-    // ---- keepalive: пинг телефона, чтобы Mac не усыплял USB-порт ----
+    // ---- keepalive: ping the phone so macOS doesn't suspend the USB port ----
     func startKeepalive() {
         let script = (Bundle.main.resourcePath ?? "") + "/phone-keepalive.sh"
         guard FileManager.default.fileExists(atPath: script) else { return }
@@ -45,7 +44,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         try? p.run(); p.waitUntilExit()
     }
 
-    // ---- хелперы состояния ----
+    // ---- state helpers ----
     func sh(_ cmd: String) -> String {
         let t = Process(); t.launchPath = "/bin/bash"; t.arguments = ["-c", cmd]
         let pipe = Pipe(); t.standardOutput = pipe; t.standardError = pipe
@@ -61,34 +60,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     func wifiAvailable() -> Bool {
-        // Wi-Fi = ПРЯМОЙ SSH-канал (не Wireless Debugging!). Пинг кэш-IP + открытый sshd:8022.
-        // Так Wi-Fi доступен без включения Wireless Debugging на телефоне.
+        // Wi-Fi = DIRECT SSH channel (not Wireless Debugging). Ping cached IP + open sshd:8022.
         sh("IP=$(cat ~/.phone_wifi_ip 2>/dev/null); [ -n \"$IP\" ] && ping -c1 -t1 \"$IP\" >/dev/null 2>&1 && nc -z -G2 \"$IP\" 8022 >/dev/null 2>&1 && echo y")
             .contains("y")
     }
-    // статусы трёх каналов для прозрачного отображения
-    func usbAdbOn() -> Bool { usbAvailable() }      // adb по USB (кабель)
-    func wifiSshOn() -> Bool { wifiAvailable() }    // прямой SSH по Wi-Fi
-    func wirelessDebugOn() -> Bool {                 // Wireless Debugging ВЕЩАЕТ в mDNS (доступен)
+    func usbAdbOn() -> Bool { usbAvailable() }      // adb over USB (cable)
+    func wifiSshOn() -> Bool { wifiAvailable() }    // direct SSH over Wi-Fi
+    func wirelessDebugOn() -> Bool {                 // Wireless Debugging advertises via mDNS
         !sh("\(adb) mdns services 2>/dev/null | grep -i _adb-tls-connect")
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-    func wdConnected() -> Bool {                      // adb реально подключён по Wi-Fi (ip:port или _adb-tls)
+    func wdConnected() -> Bool {                      // adb actually connected over Wi-Fi (ip:port or _adb-tls)
         !sh("\(adb) devices | awk '/\\tdevice$/{print $1}' | grep -E ':[0-9]+$|_adb-tls'")
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-    // Админский канал НИКОГДА не выключаем. Если телефон его вещает, а мы не подключены — подключаемся.
+    // Admin channel is never turned off. If the phone advertises it and we're not connected, connect.
     func autoConnectWD() {
         if wirelessDebugOn() && !wdConnected() {
             _ = sh("EP=$(\(adb) mdns services 2>/dev/null | awk '/_adb-tls-connect._tcp/{print $NF; exit}'); [ -n \"$EP\" ] && \(adb) connect \"$EP\" >/dev/null 2>&1")
         }
     }
-    // Wi-Fi adb через mDNS / динамический порт (НЕ 5555)
+    // Wi-Fi adb via mDNS / dynamic port (NOT 5555)
     func wdMdnsOn() -> Bool {
         !sh("\(adb) devices | awk '/\\tdevice$/{print $1}' | grep -E '_adb-tls|:[0-9]+' | grep -v ':5555'")
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-    // Wi-Fi adb на фикс-порт 5555
+    // Wi-Fi adb on fixed port 5555
     func wd5555On() -> Bool {
         !sh("\(adb) devices | grep ':5555' | grep -w device")
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -100,9 +97,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return sh("\(adb) -s \(dev) shell getprop ro.product.model")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
-    // имя секции по конкретному устройству канала: "SM-G975F (USB)" / "SM-G975F (Wi-Fi)"
+    // section title per channel device: "SM-G975F (USB)" / "SM-G975F (Wi-Fi · SSH)"
     func transportLabel(_ wifi: Bool, _ chan: String) -> String {
-        // Wi-Fi идёт по прямому SSH (adb-устройства может не быть) → берём модель с любого источника.
         if wifi {
             let m = phoneModel()
             return m.isEmpty ? "\(chan) volume" : "\(m) (\(chan))"
@@ -115,7 +111,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return m.isEmpty ? "\(chan) volume" : "\(m) (\(chan))"
     }
 
-    // ---- построить меню ----
+    // ---- build menu ----
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
@@ -133,44 +129,45 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let usbA  = usbAvailable()
         let wifiA = wifiAvailable()
 
-        // ---- статус-строка: точка = НА СВЯЗИ (любой канал), а не «смонтировано» ----
+        // ---- status line: dot = REACHABLE (any channel), not "mounted" ----
         let model = phoneModel()
         let reach = usbAdbOn() || wifiSshOn()
         var mounted: [String] = []
         if usbM  { mounted.append("USB") }
         if wifiM { mounted.append("Wi-Fi") }
-        let mountedStr = mounted.isEmpty ? "папки не смонтированы" : "папки: " + mounted.joined(separator: "+")
-        let statusTitle = "\(reach ? "●" : "○") \(model.isEmpty ? (reach ? "На связи" : "Телефон не найден") : model) — \(mountedStr)"
+        let mountedStr = mounted.isEmpty ? "no folders mounted" : "folders: " + mounted.joined(separator: "+")
+        let statusTitle = "\(reach ? "●" : "○") \(model.isEmpty ? (reach ? "Connected" : "Phone not found") : model) — \(mountedStr)"
         let st = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
         st.isEnabled = false
         menu.addItem(st)
         menu.addItem(.separator())
 
-        // ---- ЦЕНТР ПОДКЛЮЧЕНИЯ: прозрачный статус трёх каналов ----
-        autoConnectWD()  // админский канал не выключаем; вещает → подключаемся сами
-        let chHdr = NSMenuItem(title: "Каналы (клик = вкл/выкл, наведи для подсказки)", action: nil, keyEquivalent: ""); chHdr.isEnabled = false
+        // ---- CONNECTION CENTER: transparent status of the 4 channels ----
+        autoConnectWD()  // admin channel not disabled; if advertised, connect automatically
+        let chHdr = NSMenuItem(title: "Channels (click to toggle · hover for help)", action: nil, keyEquivalent: ""); chHdr.isEnabled = false
         menu.addItem(chHdr)
-        // 4 канала раздельно, каждый — кликабельный тумблер; красный = не удалось поднять
-        addChannel(menu, "USB (кабель) — файлы + команды", usbAdbOn(), "usb", #selector(toggleUSB),
-                   "Кабель (adb). Файлы push/pull + команды (pm, scrcpy). Клик — пере-подключить (re-enumerate). Если порт усыплён — передёрни дата-кабель.")
-        addChannel(menu, "Wi-Fi SSH (8022) — файлы без кабеля", wifiSshOn(), "ssh", #selector(toggleSSH),
-                   "Прямой SSH по Wi-Fi (8022). Главный канал для файлов/стрима, ~25 МБ/с, мультипоток. Клик — проверить/перезапустить sshd. В adb-приложениях НЕ виден.")
-        addChannel(menu, "Wireless-debug (mDNS) — админ adb", wdMdnsOn(), "wdmdns", #selector(toggleWDmdns),
-                   "adb по Wi-Fi через mDNS (динамический порт). Админ-команды: scrcpy, pm, logcat. Клик: выкл→подключить, вкл→отключить. Сам тумблер WD включается на телефоне.")
-        addChannel(menu, "adb TCP 5555 (легаси) — админ adb", wd5555On(), "tcp5555", #selector(toggle5555),
-                   "Легаси adb-over-tcp на фикс-порт 5555 (старый способ, если adbd слушает). Не переживает ребут телефона. Клик: выкл→connect 5555, вкл→disconnect.")
-        menu.addItem(item("  ⓘ Какой канал для чего", #selector(helpChannels), ""))
-        menu.addItem(item("  Проверить все каналы", #selector(checkAll), ""))
-        menu.addItem(item("  Проверить SSH", #selector(checkSSH), ""))
-        menu.addItem(item("  Перезапустить SSH на телефоне", #selector(restartSSH), ""))
+        // 4 channels separately, each a clickable toggle; red = connect failed
+        addChannel(menu, "USB (cable) — files + commands", usbAdbOn(), "usb", #selector(toggleUSB),
+                   "Cable (adb). File push/pull + commands (pm, scrcpy, logcat). Click to reconnect (re-enumerate). If the port is asleep, replug the DATA cable.")
+        addChannel(menu, "Wi-Fi SSH (8022) — files, no cable", wifiSshOn(), "ssh", #selector(toggleSSH),
+                   "Direct SSH over Wi-Fi (8022). Main channel for files/streaming, ~25 MB/s, multi-stream. Click to check/restart sshd. Not visible in adb apps.")
+        addChannel(menu, "Wireless-debug (mDNS) — admin adb", wdMdnsOn(), "wdmdns", #selector(toggleWDmdns),
+                   "adb over Wi-Fi via mDNS (dynamic port). Admin commands: scrcpy, pm, logcat. Click: off → connect, on → disconnect. The WD toggle itself is enabled on the phone.")
+        addChannel(menu, "adb TCP 5555 (legacy) — admin adb", wd5555On(), "tcp5555", #selector(toggle5555),
+                   "Legacy adb-over-tcp on fixed port 5555 (old method, if adbd listens). Does NOT survive a phone reboot. Click: off → connect 5555, on → disconnect.")
+        menu.addItem(item("  ⓘ Which channel for what", #selector(helpChannels), ""))
+        menu.addItem(item("  Check all channels", #selector(checkAll), ""))
+        menu.addItem(item("  Check SSH", #selector(checkSSH), ""))
+        menu.addItem(item("  Restart SSH on phone", #selector(restartSSH), ""))
         menu.addItem(.separator())
 
-        // ---- файловые браузеры ----
-        menu.addItem(item("Открыть FileDroid", #selector(openBrowser), "b"))
-        menu.addItem(item("Открыть ADB Explorer", #selector(openAdbExplorer), ""))
+        // ---- file browsers ----
+        menu.addItem(item("Open FileDroid", #selector(openBrowser), "b"))
+        menu.addItem(item("Open ADB Explorer", #selector(openAdbExplorer), ""))
+        menu.addItem(item("⬇︎ Download from internet to phone", #selector(downloadToPhone), ""))
         menu.addItem(.separator())
 
-        // ---- секция USB volume ----
+        // ---- USB volume ----
         let usbHdr = NSMenuItem(title: transportLabel(false, "USB"), action: nil, keyEquivalent: "")
         usbHdr.isEnabled = false
         menu.addItem(usbHdr)
@@ -186,21 +183,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        // ---- секция Wi-Fi volume ----
+        // ---- Wi-Fi volume ----
         let wifiHdr = NSMenuItem(title: transportLabel(true, "Wi-Fi · SSH"), action: nil, keyEquivalent: "")
         wifiHdr.isEnabled = false
-        wifiHdr.toolTip = "Эта папка смонтирована по Wi-Fi через SSH (НЕ через Wireless-debug)."
+        wifiHdr.toolTip = "This folder is mounted over Wi-Fi via SSH (NOT via Wireless-debug)."
         menu.addItem(wifiHdr)
-        // постоянный варнинг (виден всегда, не только когда не смонтировано)
-        let wifiWarn = NSMenuItem(title: "  ⚠︎ Finder по Wi-Fi медленный — для просмотра бери браузер/IINA/SSH", action: nil, keyEquivalent: "")
+        let wifiWarn = NSMenuItem(title: "  ⚠︎ Finder over Wi-Fi is slow — use a browser/IINA/SSH to view", action: nil, keyEquivalent: "")
         wifiWarn.isEnabled = false
-        wifiWarn.toolTip = "Маунт по Wi-Fi идёт через SSH — стабильнее, чем по Wireless-debug, но это всё равно FUSE-по-сети: при обрыве Wi-Fi Finder может подвиснуть (есть watchdog, аварийно отмонтирует). Для просмотра/стрима — браузер+IINA, не Finder."
+        wifiWarn.toolTip = "The Wi-Fi mount goes over SSH — more stable than Wireless-debug, but still FUSE-over-network: if Wi-Fi drops, Finder can hang (a watchdog force-unmounts). For viewing/streaming use a browser + IINA, not Finder."
         menu.addItem(wifiWarn)
         if wifiM {
             menu.addItem(item("  Open Wi-Fi folder", #selector(openWiFi), ""))
             menu.addItem(item("  Unmount Wi-Fi", #selector(unmountWiFi), ""))
         } else if wifiA {
-            menu.addItem(item("  ⚠︎ Mount Wi-Fi (медленно, крайний случай)", #selector(mountWiFi), ""))
+            menu.addItem(item("  ⚠︎ Mount Wi-Fi (slow, last resort)", #selector(mountWiFi), ""))
         } else {
             let na = NSMenuItem(title: "  (unavailable)", action: nil, keyEquivalent: "")
             na.isEnabled = false
@@ -208,9 +204,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        // ---- общие действия ----
+        // ---- general actions ----
         menu.addItem(item("Mount all available", #selector(mountAll), "m"))
-        menu.addItem(item("🔌 Подключить всё", #selector(reconnect), "r"))
+        menu.addItem(item("🔌 Connect everything", #selector(reconnect), "r"))
         menu.addItem(item("Screen mirror", #selector(mirror), ""))
         menu.addItem(item("Clear phone cache", #selector(clearCache), ""))
         menu.addItem(.separator())
@@ -222,16 +218,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         i.target = self; return i
     }
 
-    // ---- run: запуск скрипта из бандла ----
+    // ---- run a bundled SCRIPT FILE: bash <script> <args> ----
     func run(_ scriptPath: String, _ extraArgs: [String] = [], _ done: @escaping (Int32, String) -> Void) {
+        exec(launch: "/bin/bash", args: [scriptPath] + extraArgs, done)
+    }
+    // ---- run an INLINE command correctly: bash -c CMD bash <posArgs...> ($1.. = posArgs) ----
+    func runCmd(_ cmd: String, _ posArgs: [String] = [], _ done: @escaping (Int32, String) -> Void) {
+        exec(launch: "/bin/bash", args: ["-c", cmd, "phonestream"] + posArgs, done)
+    }
+    // shared executor: output to a temp file (NOT a Pipe — a daemonized rclone inherits the fd
+    // and keeps the pipe open → readDataToEndOfFile() would hang forever, freezing on "Working…").
+    private func exec(launch: String, args: [String], _ done: @escaping (Int32, String) -> Void) {
         busy = true
         DispatchQueue.global().async {
             let t = Process()
-            t.launchPath = "/bin/bash"
-            t.arguments = [scriptPath] + extraArgs
-            // ВАЖНО: вывод в temp-файл, НЕ в Pipe. Демонизированный rclone наследует fd
-            // и держит pipe открытым → readDataToEndOfFile() висит вечно (busy не снимался,
-            // трей застревал на "Working…"). Обычный файл читается до EOF сразу. stdin→/dev/null.
+            t.launchPath = launch
+            t.arguments = args
             let tmp = NSTemporaryDirectory() + "phonestream-\(UUID().uuidString).log"
             FileManager.default.createFile(atPath: tmp, contents: nil)
             let fh = FileHandle(forWritingAtPath: tmp)
@@ -252,66 +254,80 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if code == 0 { self.openUSB() } else { self.alert("USB mount failed", out) }
         }
     }
-    @objc func unmountUSB() {
-        run(unmountScript, ["usb"]) { _, _ in }
-    }
-    @objc func openUSB() {
-        NSWorkspace.shared.open(URL(fileURLWithPath: mntUSB))
-    }
+    @objc func unmountUSB() { run(unmountScript, ["usb"]) { _, _ in } }
+    @objc func openUSB() { NSWorkspace.shared.open(URL(fileURLWithPath: mntUSB)) }
     @objc func openBrowser() {
-        // быстрый браузер телефона (adb-листинг, не Finder); в нём открытие файла = стрим
         let candidates = ["/Applications/FileDroid.app"]
         for c in candidates where FileManager.default.fileExists(atPath: c) {
             NSWorkspace.shared.open(URL(fileURLWithPath: c)); return
         }
-        alert("Браузер не найден", "Поставь FileDroid в /Applications (или ADBFileExplorer).")
+        alert("Browser not found", "Install FileDroid in /Applications (or ADBFileExplorer).")
     }
 
     // ---- Wi-Fi actions ----
     @objc func mountWiFi() {
         let a = NSAlert()
-        a.messageText = "Mount по Wi-Fi — медленно, крайний случай"
+        a.messageText = "Wi-Fi mount — slow, last resort"
         a.informativeText = """
-        Маунт в Finder по Wi-Fi тормозит (Finder + превью macOS читают файлы целиком) и может подвиснуть при обрыве связи.
+        Mounting in Finder over Wi-Fi is slow (Finder + macOS thumbnails read whole files) and can hang if the link drops.
 
-        Лучше:
-        • Браузить → приложение-браузер (ADB Explorer / FileDroid)
-        • Смотреть видео → из браузера, откроется в IINA (стрим, без выкачки)
-        • Переносить файлы → по SSH (rclone / Cyberduck)
+        Better:
+        • Browse → a browser app (ADB Explorer / FileDroid)
+        • Watch video → from the browser, opens in IINA (streamed, no full download)
+        • Transfer files → over SSH (rclone / Cyberduck)
 
-        Монтировать по Wi-Fi стоит только если другой Mac-программе позарез нужен путь к файлу, а кабеля нет.
+        Only mount over Wi-Fi if another Mac app really needs a file path and there's no cable.
         """
-        a.addButton(withTitle: "Всё равно смонтировать")
-        a.addButton(withTitle: "Отмена")
+        a.addButton(withTitle: "Mount anyway")
+        a.addButton(withTitle: "Cancel")
         if a.runModal() != .alertFirstButtonReturn { return }
         run(mountScript, ["wifi"]) { code, out in
             if code == 0 { self.openWiFi() } else { self.alert("Wi-Fi mount failed", out) }
         }
     }
-    @objc func unmountWiFi() {
-        run(unmountScript, ["wifi"]) { _, _ in }
-    }
-    @objc func openWiFi() {
-        NSWorkspace.shared.open(URL(fileURLWithPath: mntWiFi))
+    @objc func unmountWiFi() { run(unmountScript, ["wifi"]) { _, _ in } }
+    @objc func openWiFi() { NSWorkspace.shared.open(URL(fileURLWithPath: mntWiFi)) }
+
+    // ---- download from internet straight to phone (bypasses Mac disk) ----
+    @objc func downloadToPhone() {
+        let a = NSAlert()
+        a.messageText = "Download from internet to phone"
+        a.informativeText = "Paste a URL — the file goes straight to the phone (/sdcard/Download), bypassing the Mac disk. Requires a live Wi-Fi SSH channel."
+        a.addButton(withTitle: "Download")
+        a.addButton(withTitle: "Cancel")
+        let tf = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
+        tf.placeholderString = "https://…"
+        a.accessoryView = tf
+        a.window.initialFirstResponder = tf
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        let url = tf.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !url.isEmpty else { return }
+        let script = """
+        URL="$1"
+        IP=$(cat ~/.phone_wifi_ip 2>/dev/null); IP=${IP:-192.168.1.202}
+        KEY=$HOME/.ssh/id_ed25519_phone
+        if ! nc -z -G2 "$IP" 8022 >/dev/null 2>&1; then echo "No SSH link to the phone (8022). Bring up Wi-Fi SSH first."; exit 1; fi
+        /usr/local/bin/rclone copyurl "$URL" ":sftp,host=$IP,port=8022,user=u0_a520,key_file=$KEY,shell_type=none:/sdcard/Download" --auto-filename -q \
+          && echo "✅ Saved to phone: /sdcard/Download/" \
+          || echo "❌ Failed (check the URL and the SSH link)."
+        """
+        runCmd(script, [url]) { _, out in self.alert("Download to phone", out) }
     }
 
-    // ---- общие ----
+    // ---- general ----
     @objc func mountAll() {
         run(mountAllScript) { code, out in
             if code == 0 {
-                // открыть оба (что смонтировано)
                 if self.usbMounted()  { self.openUSB() }
                 if self.wifiMounted() { self.openWiFi() }
-            } else {
-                self.alert("Mount all failed", out)
-            }
+            } else { self.alert("Mount all failed", out) }
         }
     }
     @objc func reconnect() {
-        // «Подключить всё»: прогон по всем способам инициализации каждого канала + отчёт.
+        // "Connect everything": run through every init method for each channel + report.
         run(rediscoverScript) { _, out in
-            self.alert("Подключение всех каналов",
-                out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Готово." : out)
+            self.alert("Connect everything",
+                out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Done." : out)
         }
     }
 
@@ -335,7 +351,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             a.informativeText = "Screen mirroring uses scrcpy. Install it via Homebrew?"
             a.addButton(withTitle: "Install (brew)"); a.addButton(withTitle: "Cancel")
             if a.runModal() == .alertFirstButtonReturn {
-                run("/bin/bash", ["-lc", "brew install scrcpy"]) { code, out in
+                runCmd("export PATH=/opt/homebrew/bin:/usr/local/bin:$PATH; brew install scrcpy") { code, out in
                     self.alert(code == 0 ? "scrcpy installed" : "Install failed",
                                code == 0 ? "Done — click \"Screen mirror\" again." : out)
                 }
@@ -359,13 +375,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let serial = pickDeviceSerial() else {
             alert("Phone not connected", "Connect your phone first (USB or Wi-Fi)."); return
         }
-        run("/bin/bash", ["-c", "\(adb) -s \(serial) shell pm trim-caches 9999999999999"]) { code, out in
+        runCmd("\(adb) -s \(serial) shell pm trim-caches 9999999999999") { code, out in
             self.alert(code == 0 ? "Cache cleared" : "Failed",
                        code == 0 ? "App caches cleared on the phone." : out)
         }
     }
 
-    // ---- открыть наш Python-браузер ADBFileExplorer ----
+    // ---- open our Python browser ADBFileExplorer ----
     @objc func openAdbExplorer() {
         let runsh = NSHomeDirectory() + "/PhoneAsExtStorage/ADBFileExplorer/run.sh"
         if FileManager.default.fileExists(atPath: runsh) {
@@ -373,35 +389,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             t.arguments = ["-lc", "cd \"$(dirname \(runsh))\" && nohup bash run.sh >/tmp/adbfe.log 2>&1 &"]
             try? t.run()
         } else {
-            alert("ADB Explorer не найден", "Ожидал ~/PhoneAsExtStorage/ADBFileExplorer/run.sh")
+            alert("ADB Explorer not found", "Expected ~/PhoneAsExtStorage/ADBFileExplorer/run.sh")
         }
     }
 
-    // ---- онбординг: какой канал для чего ----
+    // ---- onboarding: which channel for what ----
     @objc func helpChannels() {
-        alert("4 канала — что для чего",
+        alert("4 channels — which for what",
 """
-ДВА ПРОТОКОЛА: три канала — adb (команды + файлы), один — SSH (только файлы).
+TWO PROTOCOLS: three channels are adb (commands + files), one is SSH (files only).
 
-1) USB (кабель) — adb по проводу. Самый стабильный, не зависит от сети. ~27 МБ/с. Команды под shell-uid (scrcpy, pm, logcat) + push/pull. «Mount USB» — папка в Finder.
+1) USB (cable) — adb over the wire. Most stable, independent of the network. ~27 MB/s. Commands under shell-uid (scrcpy, pm, logcat) + push/pull. "Mount USB" → folder in Finder.
 
-2) Wi-Fi SSH (8022) — SSH/SFTP по Wi-Fi. ГЛАВНЫЙ канал для ФАЙЛОВ без кабеля: браузинг, стрим в IINA, перенос ~25 МБ/с мультипоток. Фикс-порт, переживает ребут (Termux:Boot). Команды Android НЕ даёт. В adb-приложениях не виден.
+2) Wi-Fi SSH (8022) — SSH/SFTP over Wi-Fi. MAIN channel for FILES without a cable: browsing, streaming in IINA, transfer ~25 MB/s multi-stream. Fixed port, survives reboot (Termux:Boot). No Android commands. Not visible in adb apps.
 
-3) Wireless-debug (mDNS) — adb по Wi-Fi, динамический порт. Для АДМИН-команд по воздуху (scrcpy, pm, logcat). Тумблер включается на телефоне; порт меняется при ребуте.
+3) Wireless-debug (mDNS) — adb over Wi-Fi, dynamic port. For ADMIN commands over the air (scrcpy, pm, logcat). The toggle is enabled on the phone; the port changes on reboot.
 
-4) adb TCP 5555 (легаси) — тот же adbd по Wi-Fi, но старый фикс-порт 5555. После ребута телефона пропадает. По сути дубль канала №3 (две двери в одну комнату).
+4) adb TCP 5555 (legacy) — the same adbd over Wi-Fi, but on the old fixed port 5555. Disappears after a phone reboot. Basically a duplicate of channel #3 (two doors into one room).
 
-ВАЖНО: №3 и №4 — один и тот же adbd на телефоне, просто разные входы. Все Wi-Fi-каналы упираются в одно радио → скорость ~равна и НЕ суммируется.
+IMPORTANT: #3 and #4 are the same adbd on the phone, just different entrances. All Wi-Fi channels share one radio → speeds are ~equal and do NOT add up.
 
-ПРАВИЛО:
-• Файлы по воздуху → SSH (надёжный, reboot-proof).
-• Админ-команды по воздуху → Wireless-debug (mDNS).
-• Всё сразу и максимально стабильно → USB.
-• Стрим видео → через файловый браузер (откроется в IINA, без выкачки).
+RULE:
+• Files over the air → SSH (reliable, reboot-proof).
+• Admin commands over the air → Wireless-debug (mDNS).
+• Everything at once, most stable → USB.
+• Stream video → via a browser app (opens in IINA, no full download).
 """)
     }
 
-    // ---- SSH-отчёт в фоне (не вешает UI) ----
+    // ---- async SSH report (doesn't block the UI) ----
     func sshReport(_ title: String, _ cmd: String) {
         busy = true
         DispatchQueue.global().async {
@@ -409,12 +425,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 self.busy = false
                 self.alert(title, out.isEmpty
-                    ? "Нет ответа от телефона по SSH.\nЕсли sshd упал полностью — запусти на телефоне виджет «Start-SSHD» (Termux:Widget) или перезагрузи телефон (Termux:Boot поднимет sshd сам)."
+                    ? "No response from the phone over SSH.\nIf sshd is fully down, launch the \"Start-SSHD\" widget on the phone (Termux:Widget) or reboot it (Termux:Boot brings sshd back up)."
                     : out)
             }
         }
     }
-    // кликабельная строка канала: 🟢 работает / 🔴 не удалось / ⚪️ выкл
+    // clickable channel row: 🟢 working / 🔴 failed / ⚪️ off
     func addChannel(_ menu: NSMenu, _ text: String, _ working: Bool, _ key: String, _ sel: Selector, _ tip: String) {
         let dot = working ? "🟢" : (failed.contains(key) ? "🔴" : "⚪️")
         let title = "  \(dot) \(text)"
@@ -427,70 +443,70 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(it)
     }
 
-    // ---- тумблеры каналов: трогают ТОЛЬКО свой канал, рабочее не дёргают ----
+    // ---- channel toggles: touch ONLY their own channel, never the working ones ----
     @objc func toggleUSB() {
-        if usbAdbOn() { return }   // работает — не трогаем
-        run("/bin/bash", ["-c", "\(adb) reconnect offline >/dev/null 2>&1; sleep 1; \(adb) devices -l | grep -q usb: && echo OK"]) { _, out in
+        if usbAdbOn() { return }   // working — leave it
+        runCmd("\(adb) reconnect offline >/dev/null 2>&1; sleep 1; \(adb) devices -l | grep -q usb: && echo OK") { _, out in
             if out.contains("OK") { self.failed.remove("usb") }
-            else { self.failed.insert("usb"); self.alert("USB не поднялся", "Порт, похоже, усыплён. Передёрни ДАТА-кабель (не зарядный) или другой порт — софтом не разбудить.") }
+            else { self.failed.insert("usb"); self.alert("USB didn't come up", "The port seems suspended. Replug the DATA cable (not charge-only) or try another port — software can't wake it.") }
         }
     }
     @objc func toggleSSH() {
-        if wifiSshOn() { alert("Wi-Fi SSH", "Работает (порт 8022). Это серверный канал на телефоне — выключать его тут незачем."); return }
-        run("/bin/bash", ["-c", "IP=$(cat ~/.phone_wifi_ip 2>/dev/null); IP=${IP:-192.168.1.202}; KEY=$HOME/.ssh/id_ed25519_phone; ssh -i \"$KEY\" -p 8022 -o StrictHostKeyChecking=no -o ConnectTimeout=6 u0_a520@\"$IP\" 'pgrep -x sshd >/dev/null || sshd' 2>/dev/null; sleep 1; nc -z -G2 \"$IP\" 8022 && echo OK"]) { _, out in
+        if wifiSshOn() { alert("Wi-Fi SSH", "Working (port 8022). This is the phone's server channel — no need to turn it off here."); return }
+        runCmd("IP=$(cat ~/.phone_wifi_ip 2>/dev/null); IP=${IP:-192.168.1.202}; KEY=$HOME/.ssh/id_ed25519_phone; ssh -i \"$KEY\" -p 8022 -o StrictHostKeyChecking=no -o ConnectTimeout=6 u0_a520@\"$IP\" 'pgrep -x sshd >/dev/null || sshd' 2>/dev/null; sleep 1; nc -z -G2 \"$IP\" 8022 && echo OK") { _, out in
             if out.contains("OK") { self.failed.remove("ssh") }
-            else { self.failed.insert("ssh"); self.alert("SSH не отвечает", "Телефон недоступен по SSH. Запусти на телефоне виджет «Start-SSHD» или подожди — watchdog поднимет сам.") }
+            else { self.failed.insert("ssh"); self.alert("SSH not responding", "Phone unreachable over SSH. Launch the \"Start-SSHD\" widget on the phone, or wait — the watchdog will bring it up.") }
         }
     }
     @objc func toggleWDmdns() {
-        if wdMdnsOn() {  // выкл: отключить mDNS-вход(ы), НЕ трогая 5555/USB
-            run("/bin/bash", ["-c", "for d in $(\(adb) devices | awk '/device$/{print $1}' | grep -E '_adb-tls|:[0-9]+' | grep -v ':5555'); do \(adb) disconnect \"$d\" >/dev/null 2>&1; done; echo done"]) { _, _ in }
-        } else {        // вкл: warmup mDNS (без kill-server, чтобы не рвать другие) + connect
-            run("/bin/bash", ["-c", "\(adb) mdns services >/dev/null 2>&1; sleep 1; EP=$(\(adb) mdns services 2>/dev/null | awk '/_adb-tls-connect._tcp/{print $NF; exit}'); [ -n \"$EP\" ] && \(adb) connect \"$EP\" >/dev/null 2>&1; sleep 1; \(adb) devices | awk '/device$/{print $1}' | grep -E '_adb-tls|:[0-9]+' | grep -v ':5555' | grep -q . && echo OK"]) { _, out in
+        if wdMdnsOn() {  // off: disconnect the mDNS entry/entries, without touching 5555/USB
+            runCmd("for d in $(\(adb) devices | awk '/device$/{print $1}' | grep -E '_adb-tls|:[0-9]+' | grep -v ':5555'); do \(adb) disconnect \"$d\" >/dev/null 2>&1; done; echo done") { _, _ in }
+        } else {        // on: warm up mDNS (no kill-server, to avoid dropping others) + connect
+            runCmd("\(adb) mdns services >/dev/null 2>&1; sleep 1; EP=$(\(adb) mdns services 2>/dev/null | awk '/_adb-tls-connect._tcp/{print $NF; exit}'); [ -n \"$EP\" ] && \(adb) connect \"$EP\" >/dev/null 2>&1; sleep 1; \(adb) devices | awk '/device$/{print $1}' | grep -E '_adb-tls|:[0-9]+' | grep -v ':5555' | grep -q . && echo OK") { _, out in
                 if out.contains("OK") { self.failed.remove("wdmdns") }
-                else { self.failed.insert("wdmdns"); self.alert("Wireless-debug не подключился", "Включи тумблер Wireless Debugging на телефоне (Настройки → Для разработчиков). Удалённо включить нельзя. Если включён, но не виден — жми «Подключить всё» (перезапуск adb-сервера).") }
+                else { self.failed.insert("wdmdns"); self.alert("Wireless-debug didn't connect", "Enable the Wireless Debugging toggle on the phone (Settings → Developer options). It can't be enabled remotely. If it's on but not seen, click \"Connect everything\" (restarts the adb server).") }
             }
         }
     }
     @objc func toggle5555() {
         if wd5555On() {
-            run("/bin/bash", ["-c", "IP=$(cat ~/.phone_wifi_ip 2>/dev/null); IP=${IP:-192.168.1.202}; \(adb) disconnect \"$IP:5555\" >/dev/null 2>&1; echo done"]) { _, _ in }
+            runCmd("IP=$(cat ~/.phone_wifi_ip 2>/dev/null); IP=${IP:-192.168.1.202}; \(adb) disconnect \"$IP:5555\" >/dev/null 2>&1; echo done") { _, _ in }
         } else {
-            run("/bin/bash", ["-c", "IP=$(cat ~/.phone_wifi_ip 2>/dev/null); IP=${IP:-192.168.1.202}; nc -z -G1 \"$IP\" 5555 && \(adb) connect \"$IP:5555\" >/dev/null 2>&1; sleep 1; \(adb) devices | grep ':5555' | grep -wq device && echo OK"]) { _, out in
+            runCmd("IP=$(cat ~/.phone_wifi_ip 2>/dev/null); IP=${IP:-192.168.1.202}; nc -z -G1 \"$IP\" 5555 && \(adb) connect \"$IP:5555\" >/dev/null 2>&1; sleep 1; \(adb) devices | grep ':5555' | grep -wq device && echo OK") { _, out in
                 if out.contains("OK") { self.failed.remove("tcp5555") }
-                else { self.failed.insert("tcp5555"); self.alert("5555 недоступен", "adbd не слушает 5555 (после ребута телефона пропадает). Сначала подними телефон по USB или Wireless-debug.") }
+                else { self.failed.insert("tcp5555"); self.alert("5555 unavailable", "adbd isn't listening on 5555 (it disappears after a phone reboot). Bring the phone up via USB or Wireless-debug first.") }
             }
         }
     }
     @objc func checkAll() {
-        sshReport("Состояние всех каналов", """
+        sshReport("All channels status", """
 ADB=\(adb); IP=192.168.1.202
-echo "КАНАЛЫ (можно использовать параллельно):"
+echo "CHANNELS (can be used in parallel):"
 U=$("$ADB" devices -l 2>/dev/null | grep 'usb:' | awk '{print $1}')
-[ -n "$U" ] && echo "  🟢 USB (кабель, adb) — $U  [файлы push/pull, команды]" || echo "  ⚪️ USB (кабель) — нет (кабель/порт)"
+[ -n "$U" ] && echo "  🟢 USB (cable, adb) — $U  [files push/pull, commands]" || echo "  ⚪️ USB (cable) — none (cable/port)"
 WC=$("$ADB" devices 2>/dev/null | grep -E ':[0-9]+|_adb-tls' | grep -c device)
-[ "$WC" -gt 0 ] && echo "  🟢 Wi-Fi adb / Wireless-debug — $WC вход(а)  [админ: scrcpy, pm, logcat]" || echo "  ⚪️ Wi-Fi adb / Wireless-debug — нет"
-if nc -z -G2 "$IP" 8022 >/dev/null 2>&1; then echo "  🟢 Wi-Fi SSH (8022) — $IP  [файлы/стрим без кабеля; в adb-приложениях НЕ виден]"; else echo "  ⚪️ Wi-Fi SSH (8022) — нет"; fi
+[ "$WC" -gt 0 ] && echo "  🟢 Wi-Fi adb / Wireless-debug — $WC entr(y/ies)  [admin: scrcpy, pm, logcat]" || echo "  ⚪️ Wi-Fi adb / Wireless-debug — none"
+if nc -z -G2 "$IP" 8022 >/dev/null 2>&1; then echo "  🟢 Wi-Fi SSH (8022) — $IP  [files/streaming, no cable; NOT shown in adb apps]"; else echo "  ⚪️ Wi-Fi SSH (8022) — none"; fi
 echo ""
-echo "ПАПКИ в Finder (mount):"
-/sbin/mount | grep -q Phone-USB  && echo "  🟢 USB-папка ~/Phone-USB"   || echo "  ⚪️ USB-папка не смонтирована"
-/sbin/mount | grep -q Phone-WiFi && echo "  🟢 Wi-Fi-папка ~/Phone-WiFi (через SSH)" || echo "  ⚪️ Wi-Fi-папка не смонтирована"
+echo "FOLDERS in Finder (mount):"
+/sbin/mount | grep -q Phone-USB  && echo "  🟢 USB folder ~/Phone-USB"   || echo "  ⚪️ USB folder not mounted"
+/sbin/mount | grep -q Phone-WiFi && echo "  🟢 Wi-Fi folder ~/Phone-WiFi (over SSH)" || echo "  ⚪️ Wi-Fi folder not mounted"
 """)
     }
     @objc func checkSSH() {
-        sshReport("Проверка SSH-канала", """
+        sshReport("Check SSH channel", """
 IP=$(cat ~/.phone_wifi_ip 2>/dev/null); KEY=$HOME/.ssh/id_ed25519_phone
-echo "IP телефона: ${IP:-неизвестен (подключи раз по USB)}"
-[ -n "$IP" ] && { ping -c1 -t2 "$IP" >/dev/null 2>&1 && echo "ping: OK" || echo "ping: FAIL (телефон не в сети)"; }
-[ -n "$IP" ] && { nc -z -G2 "$IP" 8022 >/dev/null 2>&1 && echo "sshd:8022: открыт" || echo "sshd:8022: закрыт"; }
-[ -n "$IP" ] && ssh -i "$KEY" -p 8022 -o StrictHostKeyChecking=no -o ConnectTimeout=5 u0_a520@"$IP" "echo 'SSH-вход: OK'; echo -n 'модель: '; getprop ro.product.model" 2>/dev/null
+echo "Phone IP: ${IP:-unknown (connect once over USB)}"
+[ -n "$IP" ] && { ping -c1 -t2 "$IP" >/dev/null 2>&1 && echo "ping: OK" || echo "ping: FAIL (phone not on the network)"; }
+[ -n "$IP" ] && { nc -z -G2 "$IP" 8022 >/dev/null 2>&1 && echo "sshd:8022: open" || echo "sshd:8022: closed"; }
+[ -n "$IP" ] && ssh -i "$KEY" -p 8022 -o StrictHostKeyChecking=no -o ConnectTimeout=5 u0_a520@"$IP" "echo 'SSH login: OK'; echo -n 'model: '; getprop ro.product.model" 2>/dev/null
 """)
     }
     @objc func restartSSH() {
-        sshReport("Перезапуск SSH на телефоне", """
+        sshReport("Restart SSH on phone", """
 IP=$(cat ~/.phone_wifi_ip 2>/dev/null); KEY=$HOME/.ssh/id_ed25519_phone
-[ -z "$IP" ] && { echo "Не знаю IP телефона. Подключи раз по USB — закэширую."; exit 0; }
-ssh -i "$KEY" -p 8022 -o StrictHostKeyChecking=no -o ConnectTimeout=6 u0_a520@"$IP" 'pgrep -x sshd >/dev/null || sshd; nohup sh ~/sshd-watchdog.sh >/dev/null 2>&1 & sleep 1; echo "sshd pid: $(pgrep -x sshd | tr "\\n" " ")"; echo "watchdog: запущен"' 2>/dev/null
+[ -z "$IP" ] && { echo "Phone IP unknown. Connect once over USB to cache it."; exit 0; }
+ssh -i "$KEY" -p 8022 -o StrictHostKeyChecking=no -o ConnectTimeout=6 u0_a520@"$IP" 'pgrep -x sshd >/dev/null || sshd; nohup sh ~/sshd-watchdog.sh >/dev/null 2>&1 & sleep 1; echo "sshd pid: $(pgrep -x sshd | tr "\\n" " ")"; echo "watchdog: started"' 2>/dev/null
 """)
     }
 
