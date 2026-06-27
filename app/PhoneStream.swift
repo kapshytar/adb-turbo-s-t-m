@@ -51,7 +51,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let mounted = isMounted(), usb = usbAvailable(), wifi = wifiAvailable()
 
-        let st = NSMenuItem(title: mounted ? "● Connected (~/PhoneStream)" : "○ Not connected", action: nil, keyEquivalent: "")
+        var statusTitle = "○ Not connected"
+        if mounted {
+            let via = (try? String(contentsOfFile: "/tmp/phonestream.transport", encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            statusTitle = via.isEmpty ? "● Connected (~/PhoneStream)" : "● Connected via \(via) (~/PhoneStream)"
+        }
+        let st = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
         st.isEnabled = false; menu.addItem(st)
         menu.addItem(.separator())
         if mounted {
@@ -69,6 +75,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(item("Reconnect", #selector(reconnect), "r"))
         menu.addItem(item("Screen mirror", #selector(mirror), ""))
+        menu.addItem(item("Clear phone cache", #selector(clearCache), ""))
         menu.addItem(.separator())
         menu.addItem(item("Quit", #selector(quit), "q"))
     }
@@ -148,6 +155,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let t = Process(); t.launchPath = "/bin/bash"
         t.arguments = ["-c", "ADB=\(adb) \(scr) -s \(serial) >/dev/null 2>&1 &"]
         try? t.run()
+    }
+    @objc func clearCache() {
+        let a = NSAlert(); a.messageText = "Clear all app caches on the phone?"
+        a.informativeText = "Frees space by clearing every app's cache. Caches rebuild automatically when you use the apps. Your files and data are NOT touched."
+        a.addButton(withTitle: "Clear cache"); a.addButton(withTitle: "Cancel")
+        if a.runModal() != .alertFirstButtonReturn { return }
+        guard let serial = pickDeviceSerial() else { alert("Phone not connected", "Connect your phone first (USB or Wi-Fi)."); return }
+        run(["-c", "\(adb) -s \(serial) shell pm trim-caches 9999999999999"]) { code, out in
+            self.alert(code == 0 ? "Cache cleared" : "Failed", code == 0 ? "App caches cleared on the phone." : out)
+        }
     }
     @objc func openFolder() { NSWorkspace.shared.open(URL(fileURLWithPath: mountPoint)) }
     @objc func quit() { NSApp.terminate(nil) }

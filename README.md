@@ -1,6 +1,6 @@
-# ADB Turbo S/T ⚡ — Stream Transfer
+# ADB Turbo S/T — Stream Transfer
 
-> Turn any old Android phone into a fast, mounted external drive for your Mac — free & open-source.
+> Mount your Android phone as a Finder volume on macOS, via ADB + rclone/SFTP. 100% free & open-source.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: macOS](https://img.shields.io/badge/Platform-macOS%2011%2B-lightgrey?logo=apple)](https://github.com/kapshytar/phone-as-external-storage)
@@ -9,63 +9,64 @@
 
 ---
 
-## 😤 The Pain
+## Why this exists
 
-Android killed USB Mass Storage years ago. What replaced it?
+Android dropped USB Mass Storage years ago. Existing options each have tradeoffs:
 
-- **Google abandoned Android File Transfer** — crashes on macOS 13+, no longer maintained
-- **MTP is slow, buggy, and unreliable** — drops connections, corrupts transfers, tops out at 5–15 MB/s
-- **MacDroid / Commander One** — paid, closed-source, no thank you
-- **OpenMTP** — copy-only, no Finder volume, no streaming
-- **Raw adbfs / sshfs** — CLI-only, no setup wizard, breaks on every Android update
+- **Android File Transfer** — unmaintained, crashes on macOS 13+
+- **MTP** — slow (5–15 MB/s), connection drops, unreliable on macOS
+- **MacDroid / Commander One** — paid, closed-source
+- **OpenMTP** — copy workflow only, no Finder volume, no streaming
+- **Raw adbfs / sshfs** — CLI only, no setup wizard, fragile across Android updates
 
-There is no free, open-source tool that mounts your Android phone as a real Finder volume with true no-copy access on macOS. Until now.
-
----
-
-## ✨ What You Get
-
-- 📂 **Phone as a Finder volume** — mounted at `~/PhoneStream`, appears like any external drive
-- 🎬 **True no-copy streaming** — open videos, photos, documents directly on the phone; nothing is copied to your Mac
-- ⚡ **Multi-threaded reads** — rclone `--vfs-read-chunk-streams` pulls in parallel for maximum throughput
-- ✍️ **Full write support** — copy files back to the phone, edit documents in place (VFS write-back cache)
-- 🔌 **Auto transport selection** — USB turbo mode via `adb forward` or Wi-Fi via Wireless Debugging (mDNS), with automatic fallback
-- 🖥️ **Menubar app** — switch transport, reconnect, mount/unmount — no Terminal required
-- 🌙 **Silent server mode** — screen stays dark, adaptive wake-lock (CPU full only when SSH session is active, deep sleep otherwise)
-- 🧙 **One-command setup wizard** — `./setup.sh` walks you through every step; safe to re-run
-
-**Free forever. No paywall. No trial. No account.**
+This project mounts your Android phone as a real Finder volume with no-copy streaming, using ADB + rclone/SFTP over Termux sshd.
 
 ---
 
-## 📊 Speed
+## What You Get
+
+- **Phone as a Finder volume** — mounted at `~/PhoneStream`, appears like any external drive
+- **No-copy streaming** — open videos, photos, documents directly from the phone; nothing is copied to your Mac
+- **Multi-threaded reads** — rclone `--vfs-read-chunk-streams` pulls in parallel chunks
+- **Read/write** — copy files back to the phone, edit documents in place (VFS write-back cache)
+- **Auto transport selection** — USB mode via `adb forward` or Wi-Fi via Wireless Debugging (mDNS), with automatic fallback
+- **Menubar app** — switch transport, reconnect, mount/unmount — no Terminal required
+- **Silent server mode** — screen stays dark, adaptive wake-lock (CPU active only when SSH session is open, deep sleep otherwise)
+- **Screen mirror** — control your phone screen from the Mac via the built-in Screen Mirror button (powered by scrcpy)
+- **Setup wizard** — `./setup.sh` walks you through every step; safe to re-run
+
+---
+
+## Speed
+
+**Tested setup:** Samsung Galaxy S10+ (Android 12), Intel Mac (T2 chip), USB 3 cable, ~300 MB file. Results are single-run measurements, not a formal benchmark.
 
 | Method | Speed | Notes |
 |--------|-------|-------|
-| USB 3 + adbfs (FUSE Mode) | **~175 MB/s** | Best for large transfers, Finder integration, EXIF thumbnails |
-| USB + rclone/sftp (Stream Mode) | **~110–140 MB/s** | True no-copy, best for video streaming |
+| USB 3 + adbfs (FUSE Mode) | ~175 MB/s | Large transfers, Finder integration, EXIF thumbnails |
+| USB + rclone/sftp (Stream Mode) | ~110–140 MB/s | No-copy streaming, good for video |
 | Wi-Fi 5 GHz | ~20–40 MB/s | Bottleneck is Android power-saving latency, not the radio |
-| MTP over USB (built-in macOS) | 5–15 MB/s | Slow, glitchy, crashes |
+| MTP over USB (built-in macOS) | 5–15 MB/s | Baseline for comparison |
 
 > Use USB for anything serious. Wi-Fi adds latency because Android's Wi-Fi chip aggressively power-saves between packets — the radio is fast, the wakeup isn't.
 
 ---
 
-## 🆚 Comparison
+## Tradeoffs vs alternatives
 
-| Feature | **ADB Turbo S/T** | MacDroid | OpenMTP | Android File Transfer | adbfs / sshfs (raw) |
+| | **ADB Turbo S/T** | MacDroid | OpenMTP | Android File Transfer | adbfs / sshfs (raw) |
 |---|---|---|---|---|---|
-| Finder volume mount | ✅ | ✅ | ❌ | ❌ | ✅ (manual) |
-| No-copy streaming | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Multi-threaded reads | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Write support | ✅ | ✅ | ❌ | ❌ | ✅ (partial) |
-| GUI / menubar app | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Free & open-source | ✅ | ❌ (paid) | ✅ | ✅ (dead) | ✅ (CLI only) |
+| Finder volume mount | yes | yes | no | no | yes (manual) |
+| No-copy streaming | yes | no | no | no | no |
+| Multi-threaded reads | yes | no | no | no | no |
+| Write support | yes | yes | no | no | partial |
+| GUI / menubar app | yes | yes | yes | yes | no |
+| Free & open-source | yes | no (paid) | yes | yes (unmaintained) | yes (CLI only) |
 | Transport | ADB (USB + Wi-Fi) | MTP | MTP | MTP | ADB / SSH |
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 **Mac:**
 
@@ -75,7 +76,7 @@ cd phone-as-external-storage
 ./setup.sh
 ```
 
-The wizard installs all dependencies (macFUSE, rclone official binary, ADB), configures SSH keys and the rclone remote, and creates Desktop launchers. Safe to re-run — already-done steps are skipped.
+The wizard installs all dependencies (macFUSE, rclone official binary, ADB), configures SSH keys and the rclone remote, and creates Desktop launchers. Safe to re-run — already-done steps are skipped. `setup.sh` auto-detects your architecture (Intel/Apple Silicon) and installs the correct rclone binary.
 
 **Phone (Termux, one-liner):**
 
@@ -83,11 +84,13 @@ The wizard installs all dependencies (macFUSE, rclone official binary, ADB), con
 curl -fsSL https://raw.githubusercontent.com/kapshytar/phone-as-external-storage/main/scripts/termux-init.sh | bash
 ```
 
+> Inspect the script before running: download it first with `curl -fsSL <url> -o termux-init.sh`, review it, then run `bash termux-init.sh`.
+
 This installs `openssh`, sets up `sshd`, grants storage access, and starts the server. After that, launch **PhoneStream** from your Mac menubar.
 
 ---
 
-## 🧱 How It Works
+## How It Works
 
 Two complementary mount stacks — pick the one that fits your use case:
 
@@ -101,7 +104,7 @@ Mac Finder (~/PhoneStream)
                 └── Android storage (/storage/emulated/0)
 ```
 
-True no-copy streaming. Files never leave the phone. Multi-threaded reads via `--vfs-read-chunk-streams`.
+No-copy streaming. Files never leave the phone. Multi-threaded reads via `--vfs-read-chunk-streams`.
 
 ### FUSE Mode (adbfs + macFUSE) — recommended for Finder integration / EXIF thumbnails
 
@@ -117,7 +120,7 @@ Full FUSE volume: photo thumbnails, Spotlight indexing, SD card auto-detection. 
 
 ---
 
-## ✅ Compatibility / Requirements
+## Compatibility / Requirements
 
 ### Phone (Android)
 
@@ -132,20 +135,20 @@ Full FUSE volume: photo thumbnails, Spotlight indexing, SD card auto-detection. 
 
 **Install Termux from [F-Droid](https://f-droid.org), not the Play Store** — the Play Store build is outdated.
 
-Tested on: **Samsung Galaxy S10+ (Android 12)**. Any Android brand works; Samsung-specific caveats are noted above.
+Tested on: **Samsung Galaxy S10+ (Android 12)**. Should work on most Android devices; Samsung-specific caveats are noted above.
 
 ### Mac (macOS)
 
 | Component | Requirement | Notes |
 |-----------|-------------|-------|
 | macOS | **11 Big Sur+** | |
-| rclone binary | Intel `osx-amd64` | Apple Silicon: swap to `osx-arm64` binary in `setup.sh` |
+| rclone binary | Intel or Apple Silicon | `setup.sh` auto-detects architecture and downloads the correct binary |
 | macFUSE | Requires kext approval + **reboot** | System Settings → Privacy & Security → allow → reboot |
 | macFUSE on Apple Silicon | Needs lowered security in Recovery for KEXT | Alternative: [FUSE-T](https://www.fuse-t.org) (no kext required) |
 
 ---
 
-## 🛡️ Hardening & Longevity
+## Hardening & Longevity
 
 For always-on server use — keeping the phone running reliably as headless storage.
 
@@ -183,20 +186,17 @@ SFTP has no push-notification protocol. If a file is modified from the phone whi
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
-See [ROADMAP.md](ROADMAP.md) for the full list. Coming next:
+See [ROADMAP.md](ROADMAP.md) for the full list. Implemented features include screen mirroring (Screen Mirror button in the menubar app, powered by scrcpy). Coming next:
 
-- **scrcpy screen mirror** — control your phone screen from the Mac while it's mounted
 - Auto-reconnect on sleep/wake
 - Apple Silicon native build (arm64 rclone + FUSE-T default)
 - Menubar app: volume usage graph, transfer progress
 
 ---
 
-## 🙏 Credits
-
-Standing on the shoulders of giants:
+## Credits
 
 | Project | Author | License | Link |
 |---------|--------|---------|------|
@@ -206,7 +206,7 @@ Standing on the shoulders of giants:
 | adbfs-rootless | spion | **GPLv3** | [github.com/spion/adbfs-rootless](https://github.com/spion/adbfs-rootless) |
 | ADBFileExplorer | Aldeshov | **GPLv3** | [github.com/Aldeshov/ADBFileExplorer](https://github.com/Aldeshov/ADBFileExplorer) |
 | FileDroid | andrisasuke | — | [github.com/andrisasuke/filedroid](https://github.com/andrisasuke/filedroid) |
-| scrcpy *(optional)* | Genymobile | Apache-2.0 | [github.com/Genymobile/scrcpy](https://github.com/Genymobile/scrcpy) |
+| scrcpy | Genymobile | Apache-2.0 | [github.com/Genymobile/scrcpy](https://github.com/Genymobile/scrcpy) |
 
 > Screen mirroring is powered by **scrcpy** — we don't bundle or redistribute it; the app just launches your locally-installed `scrcpy` (offers to `brew install` it if missing).
 
@@ -214,8 +214,8 @@ Standing on the shoulders of giants:
 
 ---
 
-## 📄 License
+## License
 
-Our scripts and menubar app (`setup.sh`, `scripts/`, app source) are released under the **MIT License** — see [LICENSE](LICENSE).
+Scripts and menubar app (`setup.sh`, `scripts/`, app source) are released under the **MIT License** — see [LICENSE](LICENSE).
 
 adbfs-rootless (upstream) remains GPLv3. Build separately and apply `patch/adbfs-root-env.patch`.

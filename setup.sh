@@ -2,7 +2,7 @@
 # setup.sh — интерактивный визард "Phone as External Storage"
 # Стек: macFUSE + adbfs (FUSE-маунт) и/или rclone+sftp (no-copy стрим через Termux sshd)
 # Идемпотентно — безопасно перезапускать на любом этапе.
-# Требования: macOS Intel (Homebrew в /usr/local), bash 3.2+
+# Требования: macOS Intel или Apple Silicon (Homebrew), bash 3.2+
 set -uo pipefail
 
 # ────────────────────────────────────────────────────────────
@@ -123,10 +123,12 @@ install_rclone() {
   step "Шаг 3/9 — rclone (официальный бинарь)"
 
   # Проверяем что rclone умеет mount (brew-сборка не умеет)
-  if [ -x "/usr/local/bin/rclone" ] && /usr/local/bin/rclone mount --help >/dev/null 2>&1; then
-    ok "rclone в /usr/local/bin/rclone — поддерживает mount"
-    return 0
-  fi
+  for _rc_check in /usr/local/bin/rclone /opt/homebrew/bin/rclone; do
+    if [ -x "$_rc_check" ] && "$_rc_check" mount --help >/dev/null 2>&1; then
+      ok "rclone найден: $_rc_check — поддерживает mount"
+      return 0
+    fi
+  done
 
   if command -v rclone >/dev/null 2>&1; then
     RCLONE_PATH="$(command -v rclone)"
@@ -139,11 +141,30 @@ install_rclone() {
     fi
   fi
 
-  info "Устанавливаем официальный rclone для Intel Mac..."
+  # Определяем архитектуру и целевую папку для бинаря
+  ARCH="$(uname -m)"
+  if [ "$ARCH" = "arm64" ]; then
+    RCLONE_ARCH="osx-arm64"
+    info "Определена архитектура: Apple Silicon (arm64)"
+  else
+    RCLONE_ARCH="osx-amd64"
+    info "Определена архитектура: Intel (amd64)"
+  fi
+
+  # Целевая папка: /usr/local/bin если существует, иначе $(dirname $(which brew)) или /opt/homebrew/bin
+  if [ -d "/usr/local/bin" ]; then
+    INSTALL_DIR="/usr/local/bin"
+  else
+    BREW_BIN="$(dirname "$(which brew 2>/dev/null)" 2>/dev/null || true)"
+    INSTALL_DIR="${BREW_BIN:-/opt/homebrew/bin}"
+  fi
+  RCLONE_DEST="$INSTALL_DIR/rclone"
+
+  info "Устанавливаем официальный rclone ($RCLONE_ARCH) → $RCLONE_DEST ..."
   TMPDIR_RC="$(mktemp -d)"
   RCLONE_ZIP="$TMPDIR_RC/rclone.zip"
 
-  curl -fsSL "https://downloads.rclone.org/rclone-current-osx-amd64.zip" -o "$RCLONE_ZIP" || {
+  curl -fsSL "https://downloads.rclone.org/rclone-current-${RCLONE_ARCH}.zip" -o "$RCLONE_ZIP" || {
     fail "Не удалось скачать rclone. Проверь интернет."
     exit 1
   }
@@ -153,13 +174,13 @@ install_rclone() {
     fail "rclone бинарь не найден в архиве."; exit 1
   fi
 
-  sudo install -m 755 "$RCLONE_BIN" /usr/local/bin/rclone
+  sudo install -m 755 "$RCLONE_BIN" "$RCLONE_DEST"
   # Снять quarantine (иначе macOS заблокирует)
-  sudo xattr -d com.apple.quarantine /usr/local/bin/rclone 2>/dev/null || true
+  sudo xattr -d com.apple.quarantine "$RCLONE_DEST" 2>/dev/null || true
   rm -rf "$TMPDIR_RC"
 
-  if /usr/local/bin/rclone mount --help >/dev/null 2>&1; then
-    ok "rclone установлен: $(/usr/local/bin/rclone --version | head -1)"
+  if "$RCLONE_DEST" mount --help >/dev/null 2>&1; then
+    ok "rclone установлен: $("$RCLONE_DEST" --version | head -1)"
   else
     fail "rclone установлен, но mount не работает. Странно."; exit 1
   fi
