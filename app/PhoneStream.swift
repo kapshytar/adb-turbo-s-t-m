@@ -1,18 +1,21 @@
 import Cocoa
 
-// Menu-bar app: mount an Android phone as a no-copy drive (rclone mount).
-// Transport picker + reconnect + screen mirror (scrcpy).
+// Menu-bar app: двойной маунт телефона как двух независимых томов (rclone + sftp + Termux sshd).
+// USB  → ~/Phone-USB  (порт 8022, volname "Phone USB")
+// Wi-Fi → ~/Phone-WiFi (порт 8023, volname "Phone WiFi")
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
-    let adb        = NSString(string: "~/Library/Android/sdk/platform-tools/adb").expandingTildeInPath
-    var upScript:   String { (Bundle.main.resourcePath ?? "") + "/phone-stream-up.sh" }
-    var downScript: String { (Bundle.main.resourcePath ?? "") + "/phone-stream-down.sh" }
-    let mountPoint = NSString(string: "~/PhoneStream").expandingTildeInPath
+    let adb = NSString(string: "~/Library/Android/sdk/platform-tools/adb").expandingTildeInPath
     var busy = false
-    var transport: String {                       // "auto" | "wifi" | "usb"
-        get { UserDefaults.standard.string(forKey: "transport") ?? "auto" }
-        set { UserDefaults.standard.set(newValue, forKey: "transport") }
-    }
+
+    // ---- пути к скриптам из бандла ----
+    var mountScript:    String { (Bundle.main.resourcePath ?? "") + "/phone-mount.sh" }
+    var unmountScript:  String { (Bundle.main.resourcePath ?? "") + "/phone-unmount.sh" }
+    var mountAllScript: String { (Bundle.main.resourcePath ?? "") + "/phone-mount-all.sh" }
+
+    // ---- точки маунта ----
+    let mntUSB  = NSString(string: "~/Phone-USB").expandingTildeInPath
+    let mntWiFi = NSString(string: "~/Phone-WiFi").expandingTildeInPath
 
     func applicationDidFinishLaunching(_ note: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -24,112 +27,178 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu(); menu.delegate = self; statusItem.menu = menu
     }
 
-    // ---- helpers ----
+    // ---- хелперы состояния ----
     func sh(_ cmd: String) -> String {
         let t = Process(); t.launchPath = "/bin/bash"; t.arguments = ["-c", cmd]
         let pipe = Pipe(); t.standardOutput = pipe; t.standardError = pipe
         t.launch(); t.waitUntilExit()
         return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
     }
-    func isMounted() -> Bool { sh("/sbin/mount | grep -q PhoneStream && echo y").contains("y") }
+
+    func usbMounted()  -> Bool { sh("/sbin/mount | grep -q 'Phone-USB'  && echo y").contains("y") }
+    func wifiMounted() -> Bool { sh("/sbin/mount | grep -q 'Phone-WiFi' && echo y").contains("y") }
+
     func usbAvailable() -> Bool {
         !sh("\(adb) devices | awk '/\\tdevice$/{print $1}' | grep -v _adb-tls | grep -v ':'")
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     func wifiAvailable() -> Bool {
-        // стабильно: есть ли подключённое Wi-Fi adb-устройство (ip:port или _adb-tls), а не мигающий mDNS
         !sh("\(adb) devices | awk '/\\tdevice$/{print $1}' | grep -E ':|_adb-tls'")
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-    func activeTransport() -> String {
-        (try? String(contentsOfFile: "/tmp/phonestream.transport", encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    func phoneModel() -> String {
+        let dev = sh("\(adb) devices | awk '/\\tdevice$/{print $1}' | head -1")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if dev.isEmpty { return "" }
+        return sh("\(adb) -s \(dev) shell getprop ro.product.model")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // ---- menu ----
+    // ---- построить меню ----
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        if busy {
-            let b = NSMenuItem(title: "⏳ Working…", action: nil, keyEquivalent: ""); b.isEnabled = false
-            menu.addItem(b); menu.addItem(.separator())
-            menu.addItem(item("Quit", #selector(quit), "q")); return
-        }
-        let mounted = isMounted(), usb = usbAvailable(), wifi = wifiAvailable()
 
-        var statusTitle = "○ Not connected"
-        if mounted {
-            let via = (try? String(contentsOfFile: "/tmp/phonestream.transport", encoding: .utf8))?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            statusTitle = via.isEmpty ? "● Connected (~/PhoneStream)" : "● Connected via \(via) (~/PhoneStream)"
+        if busy {
+            let b = NSMenuItem(title: "⏳ Working…", action: nil, keyEquivalent: "")
+            b.isEnabled = false
+            menu.addItem(b)
+            menu.addItem(.separator())
+            menu.addItem(item("Quit", #selector(quit), "q"))
+            return
         }
+
+        let usbM  = usbMounted()
+        let wifiM = wifiMounted()
+        let usbA  = usbAvailable()
+        let wifiA = wifiAvailable()
+
+        // ---- статус-строка ----
+        var parts: [String] = []
+        if usbM  { parts.append("USB") }
+        if wifiM { parts.append("Wi-Fi") }
+        let model = phoneModel()
+        let statusTitle = parts.isEmpty
+            ? (model.isEmpty ? "○ Not connected" : "○ \(model) (not mounted)")
+            : "● \(model.isEmpty ? "" : "\(model) — ")\(parts.joined(separator: " + "))"
         let st = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
-        st.isEnabled = false; menu.addItem(st)
+        st.isEnabled = false
+        menu.addItem(st)
         menu.addItem(.separator())
-        if mounted {
-            menu.addItem(item("Open folder", #selector(openFolder), "o"))
-            menu.addItem(item("Unmount", #selector(unmount), "u"))
+
+        // ---- секция USB volume ----
+        let usbHdr = NSMenuItem(title: "USB volume", action: nil, keyEquivalent: "")
+        usbHdr.isEnabled = false
+        menu.addItem(usbHdr)
+        if usbM {
+            menu.addItem(item("  Open USB folder", #selector(openUSB), ""))
+            menu.addItem(item("  Unmount USB", #selector(unmountUSB), ""))
+        } else if usbA {
+            menu.addItem(item("  Mount USB", #selector(mountUSB), ""))
         } else {
-            menu.addItem(item("Mount", #selector(mountAction), "m"))
+            let na = NSMenuItem(title: "  (unavailable)", action: nil, keyEquivalent: "")
+            na.isEnabled = false
+            menu.addItem(na)
         }
         menu.addItem(.separator())
-        let hdr = NSMenuItem(title: "Transport:", action: nil, keyEquivalent: ""); hdr.isEnabled = false
-        menu.addItem(hdr)
-        // галочка = реально активный канал (когда смонтировано), иначе сохранённое предпочтение
-        let active = mounted ? activeTransport() : ""   // "USB" / "Wi-Fi"
-        addTransport(menu, "Auto", "auto", true, !mounted && transport == "auto")
-        addTransport(menu, "Wi-Fi", "wifi", wifi, active == "Wi-Fi")
-        addTransport(menu, "USB (turbo)", "usb", usb, active == "USB")
+
+        // ---- секция Wi-Fi volume ----
+        let wifiHdr = NSMenuItem(title: "Wi-Fi volume", action: nil, keyEquivalent: "")
+        wifiHdr.isEnabled = false
+        menu.addItem(wifiHdr)
+        if wifiM {
+            menu.addItem(item("  Open Wi-Fi folder", #selector(openWiFi), ""))
+            menu.addItem(item("  Unmount Wi-Fi", #selector(unmountWiFi), ""))
+        } else if wifiA {
+            menu.addItem(item("  Mount Wi-Fi", #selector(mountWiFi), ""))
+        } else {
+            let na = NSMenuItem(title: "  (unavailable)", action: nil, keyEquivalent: "")
+            na.isEnabled = false
+            menu.addItem(na)
+        }
         menu.addItem(.separator())
+
+        // ---- общие действия ----
+        menu.addItem(item("Mount all available", #selector(mountAll), "m"))
         menu.addItem(item("Reconnect", #selector(reconnect), "r"))
         menu.addItem(item("Screen mirror", #selector(mirror), ""))
         menu.addItem(item("Clear phone cache", #selector(clearCache), ""))
         menu.addItem(.separator())
         menu.addItem(item("Quit", #selector(quit), "q"))
     }
-    func addTransport(_ menu: NSMenu, _ title: String, _ key: String, _ available: Bool, _ checked: Bool) {
-        let i = NSMenuItem(title: title + (available ? "" : "  (unavailable)"),
-                           action: #selector(selectTransport(_:)), keyEquivalent: "")
-        i.target = self; i.representedObject = key
-        i.state = checked ? .on : .off
-        i.isEnabled = available
-        menu.addItem(i)
-    }
+
     func item(_ title: String, _ sel: Selector, _ key: String) -> NSMenuItem {
-        let i = NSMenuItem(title: title, action: sel, keyEquivalent: key); i.target = self; return i
+        let i = NSMenuItem(title: title, action: sel, keyEquivalent: key)
+        i.target = self; return i
     }
 
-    func run(_ args: [String], _ done: @escaping (Int32, String) -> Void) {
+    // ---- run: запуск скрипта из бандла ----
+    func run(_ scriptPath: String, _ extraArgs: [String] = [], _ done: @escaping (Int32, String) -> Void) {
         busy = true
         DispatchQueue.global().async {
-            let t = Process(); t.launchPath = "/bin/bash"; t.arguments = args
-            let pipe = Pipe(); t.standardOutput = pipe; t.standardError = pipe
+            let t = Process()
+            t.launchPath = "/bin/bash"
+            t.arguments = [scriptPath] + extraArgs
+            let pipe = Pipe()
+            t.standardOutput = pipe; t.standardError = pipe
             t.launch(); t.waitUntilExit()
             let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             DispatchQueue.main.async { self.busy = false; done(t.terminationStatus, out) }
         }
     }
 
-    @objc func mountAction() {
-        run([upScript, transport]) { code, out in
-            if code == 0 { self.openFolder() } else { self.alert("Mount failed", out) }
+    // ---- USB actions ----
+    @objc func mountUSB() {
+        run(mountScript, ["usb"]) { code, out in
+            if code == 0 { self.openUSB() } else { self.alert("USB mount failed", out) }
         }
     }
-    @objc func unmount() { run([downScript]) { _, _ in } }
-    @objc func selectTransport(_ sender: NSMenuItem) {
-        guard let key = sender.representedObject as? String else { return }
-        transport = key
-        if isMounted() {
-            run([downScript]) { _, _ in
-                self.run([self.upScript, key]) { c, o in if c != 0 { self.alert("Switch failed", o) } }
+    @objc func unmountUSB() {
+        run(unmountScript, ["usb"]) { _, _ in }
+    }
+    @objc func openUSB() {
+        NSWorkspace.shared.open(URL(fileURLWithPath: mntUSB))
+    }
+
+    // ---- Wi-Fi actions ----
+    @objc func mountWiFi() {
+        run(mountScript, ["wifi"]) { code, out in
+            if code == 0 { self.openWiFi() } else { self.alert("Wi-Fi mount failed", out) }
+        }
+    }
+    @objc func unmountWiFi() {
+        run(unmountScript, ["wifi"]) { _, _ in }
+    }
+    @objc func openWiFi() {
+        NSWorkspace.shared.open(URL(fileURLWithPath: mntWiFi))
+    }
+
+    // ---- общие ----
+    @objc func mountAll() {
+        run(mountAllScript) { code, out in
+            if code == 0 {
+                // открыть оба (что смонтировано)
+                if self.usbMounted()  { self.openUSB() }
+                if self.wifiMounted() { self.openWiFi() }
+            } else {
+                self.alert("Mount all failed", out)
             }
         }
     }
     @objc func reconnect() {
-        run(["-c", "\(adb) mdns services >/dev/null 2>&1; \(downScript) >/dev/null 2>&1; \(upScript) \(transport)"]) { code, out in
-            if code == 0 { self.openFolder() } else { self.alert("Reconnect failed", out) }
+        // размонтировать оба и смонтировать заново
+        run(unmountScript, ["all"]) { _, _ in
+            self.run(self.mountAllScript) { code, out in
+                if code == 0 {
+                    if self.usbMounted()  { self.openUSB() }
+                    if self.wifiMounted() { self.openWiFi() }
+                } else {
+                    self.alert("Reconnect failed", out)
+                }
+            }
         }
     }
 
+    // ---- scrcpy ----
     func scrcpyPath() -> String? {
         for p in ["/usr/local/bin/scrcpy", "/opt/homebrew/bin/scrcpy"]
             where FileManager.default.isExecutableFile(atPath: p) { return p }
@@ -149,9 +218,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             a.informativeText = "Screen mirroring uses scrcpy. Install it via Homebrew?"
             a.addButton(withTitle: "Install (brew)"); a.addButton(withTitle: "Cancel")
             if a.runModal() == .alertFirstButtonReturn {
-                run(["-lc", "brew install scrcpy"]) { code, out in
+                run("/bin/bash", ["-lc", "brew install scrcpy"]) { code, out in
                     self.alert(code == 0 ? "scrcpy installed" : "Install failed",
-                               code == 0 ? "Done — click “Screen mirror” again." : out)
+                               code == 0 ? "Done — click \"Screen mirror\" again." : out)
                 }
             }
             return
@@ -163,17 +232,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         t.arguments = ["-c", "ADB=\(adb) \(scr) -s \(serial) >/dev/null 2>&1 &"]
         try? t.run()
     }
+
+    // ---- clear cache ----
     @objc func clearCache() {
         let a = NSAlert(); a.messageText = "Clear all app caches on the phone?"
         a.informativeText = "Frees space by clearing every app's cache. Caches rebuild automatically when you use the apps. Your files and data are NOT touched."
         a.addButton(withTitle: "Clear cache"); a.addButton(withTitle: "Cancel")
         if a.runModal() != .alertFirstButtonReturn { return }
-        guard let serial = pickDeviceSerial() else { alert("Phone not connected", "Connect your phone first (USB or Wi-Fi)."); return }
-        run(["-c", "\(adb) -s \(serial) shell pm trim-caches 9999999999999"]) { code, out in
-            self.alert(code == 0 ? "Cache cleared" : "Failed", code == 0 ? "App caches cleared on the phone." : out)
+        guard let serial = pickDeviceSerial() else {
+            alert("Phone not connected", "Connect your phone first (USB or Wi-Fi)."); return
+        }
+        run("/bin/bash", ["-c", "\(adb) -s \(serial) shell pm trim-caches 9999999999999"]) { code, out in
+            self.alert(code == 0 ? "Cache cleared" : "Failed",
+                       code == 0 ? "App caches cleared on the phone." : out)
         }
     }
-    @objc func openFolder() { NSWorkspace.shared.open(URL(fileURLWithPath: mountPoint)) }
+
     @objc func quit() { NSApp.terminate(nil) }
     func alert(_ t: String, _ m: String) {
         let a = NSAlert(); a.messageText = t
