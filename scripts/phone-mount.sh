@@ -21,12 +21,16 @@ if [ "$T" != "usb" ] && [ "$T" != "wifi" ]; then
 fi
 
 # ---- per-transport переменные ----
-pick_usb()  { "$ADB" devices | awk '/\tdevice$/{print $1}' | grep -v '_adb-tls' | grep -v ':' | head -1; }
+# USB = устройство с маркером usb: в `adb devices -l` (надёжно, не путает с mdns-именем)
+pick_usb()  { "$ADB" devices -l | awk '/ device / && /usb:/ {print $1}' | head -1; }
+# Wi-Fi = чистый ip:port handle (mdns-имя содержит пробел и обрезается — его не берём)
 pick_wifi() {
-  local ep
+  local ep ip
+  ip=$("$ADB" devices -l | awk '/ device / && !/usb:/ {print $1}' | grep ':' | head -1)
+  [ -n "$ip" ] && { echo "$ip"; return; }
   ep=$("$ADB" mdns services 2>/dev/null | awk '/_adb-tls-connect._tcp/{print $NF; exit}')
   [ -n "$ep" ] && "$ADB" connect "$ep" >/dev/null 2>&1
-  "$ADB" devices | awk '/\tdevice$/{print $1}' | grep -E '_adb-tls|:' | head -1
+  "$ADB" devices -l | awk '/ device / && !/usb:/ {print $1}' | grep ':' | head -1
 }
 
 if [ "$T" = "usb" ]; then
@@ -104,6 +108,12 @@ LOG="/tmp/rclone_${T}.log"
   --attr-timeout 1m \
   --no-checksum \
   --vfs-fast-fingerprint \
+  --sftp-concurrency 64 \
+  --sftp-skip-links \
+  --poll-interval 0 \
+  --network-mode \
+  --noappledouble \
+  --noapplexattr \
   --volname "$VOL" \
   --no-modtime \
   --daemon \
