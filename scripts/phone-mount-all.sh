@@ -1,71 +1,27 @@
 #!/bin/bash
 # phone-mount-all.sh
-# Монтирует USB если USB-устройство доступно И Wi-Fi если Wi-Fi-устройство доступно.
-# Оба монтируются параллельно (запуск в фоне), затем ждём оба.
-# Выход: 0 если хотя бы один смонтирован, 1 если ни одного.
+# Монтирует ТОЛЬКО USB (он стабилен). Wi-Fi FUSE-маунт НЕ авто-монтируется — он хрупкий
+# (FUSE-по-сети вешает ОС при флапе Wi-Fi) и поднимается только явной кнопкой «Mount Wi-Fi».
+# Для файлов по Wi-Fi используй браузер/IINA/SSH, а не Finder-маунт.
+# Выход: 0 если USB смонтирован, 1 если нет.
 set -u
 
-# shellcheck source=config.sh
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=config.sh
 source "$SCRIPTS_DIR/config.sh"
 
 USB_DEV=$(pick_usb)
-WIFI_DEV=$(pick_wifi)
-
-if [ -z "$USB_DEV" ] && [ -z "$WIFI_DEV" ]; then
-  echo "Нет ни одного adb-устройства (ни USB, ни Wi-Fi). Включи телефон / Wireless debugging."
+if [ -z "$USB_DEV" ]; then
+  echo "USB-устройство не найдено. (Wi-Fi-папку монтируй явно через «Mount Wi-Fi» — она last-resort.)"
   exit 1
 fi
 
-PIDS=()
-LAUNCHED=()
+echo "USB-устройство найдено: $USB_DEV — монтирую USB…"
+bash "$SCRIPTS_DIR/phone-mount.sh" usb
+rc=$?
 
-if [ -n "$USB_DEV" ]; then
-  echo "USB-устройство найдено: $USB_DEV — запускаю монтирование USB…"
-  bash "$SCRIPTS_DIR/phone-mount.sh" usb &
-  PIDS+=($!)
-  LAUNCHED+=(usb)
-else
-  echo "USB-устройство не найдено — пропускаю USB."
+# после успешного маунта — поднять проактивный watchdog (страж от зависаний)
+if [ "$rc" -eq 0 ]; then
+  nohup bash "$SCRIPTS_DIR/phone-watchdog.sh" >/dev/null 2>&1 & disown
 fi
-
-if [ -n "$WIFI_DEV" ]; then
-  echo "Wi-Fi-устройство найдено: $WIFI_DEV — запускаю монтирование Wi-Fi…"
-  bash "$SCRIPTS_DIR/phone-mount.sh" wifi &
-  PIDS+=($!)
-  LAUNCHED+=(wifi)
-else
-  echo "Wi-Fi-устройство не найдено — пропускаю Wi-Fi."
-fi
-
-# дождаться обоих фоновых процессов
-RC_USB=0
-RC_WIFI=0
-IDX=0
-for PID in "${PIDS[@]}"; do
-  wait "$PID"
-  CODE=$?
-  T="${LAUNCHED[$IDX]}"
-  if [ "$T" = "usb" ]; then RC_USB=$CODE; fi
-  if [ "$T" = "wifi" ]; then RC_WIFI=$CODE; fi
-  IDX=$((IDX + 1))
-done
-
-# итог
-MOUNTED=0
-for T in "${LAUNCHED[@]}"; do
-  if [ "$T" = "usb" ] && [ "$RC_USB" -eq 0 ]; then
-    echo "USB том: OK (~/Phone-USB)"
-    MOUNTED=$((MOUNTED + 1))
-  elif [ "$T" = "usb" ]; then
-    echo "USB том: ОШИБКА (код $RC_USB)"
-  fi
-  if [ "$T" = "wifi" ] && [ "$RC_WIFI" -eq 0 ]; then
-    echo "Wi-Fi том: OK (~/Phone-WiFi)"
-    MOUNTED=$((MOUNTED + 1))
-  elif [ "$T" = "wifi" ]; then
-    echo "Wi-Fi том: ОШИБКА (код $RC_WIFI)"
-  fi
-done
-
-[ "$MOUNTED" -gt 0 ] && exit 0 || exit 1
+exit "$rc"

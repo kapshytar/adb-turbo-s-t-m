@@ -1,43 +1,65 @@
 #!/bin/bash
-# Watchdog: если есть FUSE-маунт телефона, но adb-устройство ПРОПАЛО — мёртвый маунт
-# вешает ОС. Тогда: force-unmount + kill rclone, и всё в ЛОГ (для диагностики причины).
-# Следим за adb (Codex), а не за самой точкой (её опрос может сам зависнуть).
-# Сам выходит, когда маунтов телефона больше нет.
+# ПРОАКТИВНЫЙ watchdog против D-state-висяка всей macOS.
+# Для каждой ЖИВОЙ точки маунта телефона каждые 3с:
+#   1) stat С ТАЙМАУТОМ — если файловая операция не вернулась за 3с, маунт начал виснуть → force-unmount НЕМЕДЛЕННО (до ухода ядра в непрерываемый I/O);
+#   2) доступность бэкенда (USB: usb-устройство в adb; Wi-Fi: ping IP) — 2 промаха (~6с) → force-unmount.
+# Покрывает И USB, И Wi-Fi (любой транспорт), реагирует быстро. Сам выходит, когда маунтов нет.
 set -u
-ADB="$HOME/Library/Android/sdk/platform-tools/adb"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=config.sh
+source "$HERE/config.sh"
+
 LOG="$HOME/PhoneAsExtStorage/phone-watchdog.log"
-POINTS=("$HOME/Phone-USB" "$HOME/Phone-WiFi" "$HOME/Phone" "$HOME/Phone-SD" "$HOME/Phone-System")
+USB_MNT="$HOME/Phone-USB"
+WIFI_MNT="$HOME/Phone-WiFi"
 log(){ echo "$(date '+%F %T') $*" >> "$LOG"; }
 
-# single instance
 LOCK="/tmp/phone-watchdog.lock"
-if ! mkdir "$LOCK" 2>/dev/null; then exit 0; fi
+mkdir "$LOCK" 2>/dev/null || exit 0
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
+# ротация лога
+[ "$(stat -f%z "$LOG" 2>/dev/null || echo 0)" -gt 5242880 ] && mv "$LOG" "$LOG.1" 2>/dev/null
+log "watchdog START (проактивный stat+reachability)"
 
-log "watchdog START (pid $$)"
-idle=0
+force_unmount(){ # $1=mountpoint $2=причина
+  log "ОТСТРЕЛ $1 ($2) → kill rclone + force-unmount"
+  pkill -f "rclone mount.*$1" 2>/dev/null
+  # force-unmount в фоне с таймаутом, чтобы сам watchdog не завис
+  ( _to 10 diskutil unmount force "$1" >/dev/null 2>&1; umount -f "$1" >/dev/null 2>&1 ) >/dev/null 2>&1 &
+}
+
+idle=0; usb_miss=0; wifi_miss=0
 while sleep 3; do
-  # есть ли вообще phone-маунт?
-  mounted=""
-  for m in "${POINTS[@]}"; do
-    /sbin/mount 2>/dev/null | grep -q " $m " && mounted="$mounted $m"
-  done
-  if [ -z "$mounted" ]; then
-    idle=$((idle+1))
-    # 60с без маунтов → watchdog не нужен, выходим
-    [ "$idle" -ge 20 ] && { log "нет маунтов 60с → выход"; exit 0; }
-    continue
-  fi
-  idle=0
-  # маунт есть — живо ли adb-устройство?
-  if ! "$ADB" devices 2>/dev/null | grep -q $'\tdevice'; then
-    log "DEAD: есть маунт ($mounted), но adb-устройств НЕТ → отстреливаю"
-    pkill -f "rclone mount" 2>/dev/null && log "  killed: rclone mount"
-    for m in $mounted; do
-      diskutil unmount force "$m" >/dev/null 2>&1 && log "  unmounted: $m"
-      umount -f "$m" >/dev/null 2>&1
-      rmdir "$m" 2>/dev/null
-    done
-    log "  cleanup done (см. что было примонтировано выше — причина висяка зафиксирована)"
-  fi
+  any=0
+
+  # ---- USB-том ----
+  if /sbin/mount | grep -q " $USB_MNT "; then
+    any=1
+    if ! _to 3 stat "$USB_MNT" >/dev/null 2>&1; then
+      force_unmount "$USB_MNT" "stat завис"; usb_miss=0
+    elif [ -n "$(pick_usb)" ]; then
+      usb_miss=0
+    else
+      usb_miss=$((usb_miss+1)); log "USB бэкенд недоступен #$usb_miss"
+      [ "$usb_miss" -ge 2 ] && { force_unmount "$USB_MNT" "USB-устройство пропало"; usb_miss=0; }
+    fi
+  else usb_miss=0; fi
+
+  # ---- Wi-Fi-том ----
+  if /sbin/mount | grep -q " $WIFI_MNT "; then
+    any=1
+    ip=$(phone_ip)
+    if ! _to 3 stat "$WIFI_MNT" >/dev/null 2>&1; then
+      force_unmount "$WIFI_MNT" "stat завис"; wifi_miss=0
+    elif [ -n "$ip" ] && _to 2 ping -c1 -t1 "$ip" >/dev/null 2>&1; then
+      wifi_miss=0
+    else
+      wifi_miss=$((wifi_miss+1)); log "Wi-Fi бэкенд ($ip) недоступен #$wifi_miss"
+      [ "$wifi_miss" -ge 2 ] && { force_unmount "$WIFI_MNT" "телефон недоступен по Wi-Fi"; wifi_miss=0; }
+    fi
+  else wifi_miss=0; fi
+
+  if [ "$any" -eq 0 ]; then
+    idle=$((idle+1)); [ "$idle" -ge 20 ] && { log "60с без маунтов → выход"; exit 0; }
+  else idle=0; fi
 done

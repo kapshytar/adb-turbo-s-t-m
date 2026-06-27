@@ -92,6 +92,8 @@ for i in $(seq 1 10); do
   sleep 1
   if mount | grep -q " $MNT "; then
     echo "$LABEL" > "/tmp/phonestream.${T}.transport"
+    # поднять проактивный watchdog (single-instance) — страж от D-state-зависаний
+    nohup bash "$(cd "$(dirname "$0")" && pwd)/phone-watchdog.sh" >/dev/null 2>&1 & disown
     echo "Смонтировано ($LABEL) → $MNT  [volname: $VOL]"; exit 0
   fi
 done

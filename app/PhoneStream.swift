@@ -42,6 +42,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else { statusItem.button?.title = "📱" }
         let menu = NSMenu(); menu.delegate = self; statusItem.menu = menu
         startKeepalive()   // keep the USB link hot while the tray runs
+        startWatchdog()    // proactive guard: force-unmount before a dead mount wedges the OS
 
         // FIX #1: prime the cache immediately, then refresh every 4 s
         scheduleBackgroundRefresh()
@@ -100,6 +101,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let p = Process(); p.launchPath = "/bin/bash"
         p.arguments = ["-c", "pkill -f phone-keepalive.sh 2>/dev/null"]
         try? p.run(); p.waitUntilExit()
+    }
+    // ---- proactive watchdog: catches a hanging mount before it wedges the kernel ----
+    func startWatchdog() {
+        let script = (Bundle.main.resourcePath ?? "") + "/phone-watchdog.sh"
+        guard FileManager.default.fileExists(atPath: script) else { return }
+        let p = Process(); p.launchPath = "/bin/bash"
+        p.arguments = ["-c", "exec bash \"\(script)\""]   // single-instance lock inside the script
+        try? p.run()
     }
 
     // ---- state helpers (called from background thread only) ----
