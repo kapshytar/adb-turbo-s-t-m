@@ -9,6 +9,19 @@
 
 ---
 
+## ⚠️ Tested configuration / no support
+
+This was built and tested on **exactly one setup**:
+
+- **Phone:** Samsung Galaxy S10+ (SM-G975F), Android 12 / One UI (non-rooted)
+- **Mac:** Intel Mac with T2, macOS
+
+Much of the device-side logic works around **Samsung/One UI specifics** (Knox, Wireless Debugging behavior, `protect_battery` 85% cap, phantom-process killer). On Pixel / Xiaomi / other Android versions the device UID, Wi-Fi interface name, settings keys and quirks differ — it likely **won't work out of the box**.
+
+This is a personal project shared as-is. **No support, no guarantees, no promise it works on your hardware.** If it's useful to you: fork it, adapt the hardcoded bits (phone UID, paths, IP via `~/.phone_wifi_ip`), and run with it. PRs welcome but not actively maintained for other devices.
+
+---
+
 ## Why this exists
 
 Android dropped USB Mass Storage years ago. Existing options each have tradeoffs:
