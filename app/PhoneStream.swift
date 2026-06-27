@@ -13,7 +13,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let path = Bundle.main.resourcePath,
            let img = NSImage(contentsOfFile: path + "/menubar.png") {
-            img.isTemplate = true
+            img.isTemplate = false   // цветная иконка как есть (не силуэт)
             img.size = NSSize(width: 18, height: 18)
             statusItem.button?.image = img
         } else {

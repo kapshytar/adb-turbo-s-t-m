@@ -12,15 +12,24 @@ if mount | grep -q " $MNT " && ls "$MNT" >/dev/null 2>&1; then
   exit 0
 fi
 
-# 1) выбрать adb-устройство: сперва USB, иначе Wi-Fi (mDNS)
-DEV=$("$ADB" devices | awk '/\tdevice$/{print $1}' | grep -v '_adb-tls' | grep -v ':' | head -1)
-if [ -z "$DEV" ]; then
-  EP=$("$ADB" mdns services 2>/dev/null | awk '/_adb-tls-connect._tcp/{print $NF; exit}')
-  [ -n "$EP" ] && "$ADB" connect "$EP" >/dev/null 2>&1
-  DEV=$("$ADB" devices | awk '/\tdevice$/{print $1}' | grep -E '_adb-tls|:' | head -1)
+# 1) выбрать adb-устройство.
+#    По умолчанию Wi-Fi-ПЕРВЫМ (стабильно для стоящего сервера на настенной зарядке;
+#    не зависит от питания/тока USB-порта Mac). USB — только если форсить (для турбо-передач):
+#    запуск "phone-stream-up.sh usb" или FORCE_USB=1.
+pick_usb()  { "$ADB" devices | awk '/\tdevice$/{print $1}' | grep -v '_adb-tls' | grep -v ':' | head -1; }
+pick_wifi() {
+  local ep
+  ep=$("$ADB" mdns services 2>/dev/null | awk '/_adb-tls-connect._tcp/{print $NF; exit}')
+  [ -n "$ep" ] && "$ADB" connect "$ep" >/dev/null 2>&1
+  "$ADB" devices | awk '/\tdevice$/{print $1}' | grep -E '_adb-tls|:' | head -1
+}
+if [ "${1:-}" = "usb" ] || [ "${FORCE_USB:-}" = "1" ]; then
+  DEV=$(pick_usb); [ -z "$DEV" ] && DEV=$(pick_wifi); MODE="USB (турбо)"
+else
+  DEV=$(pick_wifi); [ -z "$DEV" ] && DEV=$(pick_usb); MODE="Wi-Fi"
 fi
-[ -z "$DEV" ] && { echo "Нет adb-устройства (ни USB, ни Wi-Fi). Включи телефон/Wireless debugging."; exit 1; }
-echo "adb-устройство: $DEV"
+[ -z "$DEV" ] && { echo "Нет adb-устройства (ни Wi-Fi, ни USB). Включи телефон/Wireless debugging."; exit 1; }
+echo "adb-устройство: $DEV  [$MODE]"
 
 # 2) проброс порта sshd
 "$ADB" -s "$DEV" forward tcp:$PORT tcp:$PORT >/dev/null 2>&1
