@@ -165,7 +165,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item("  Open Wi-Fi folder", #selector(openWiFi), ""))
             menu.addItem(item("  Unmount Wi-Fi", #selector(unmountWiFi), ""))
         } else if wifiA {
-            menu.addItem(item("  Mount Wi-Fi", #selector(mountWiFi), ""))
+            menu.addItem(item("  ⚠︎ Mount Wi-Fi (медленно, крайний случай)", #selector(mountWiFi), ""))
         } else {
             let na = NSMenuItem(title: "  (unavailable)", action: nil, keyEquivalent: "")
             na.isEnabled = false
@@ -234,6 +234,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // ---- Wi-Fi actions ----
     @objc func mountWiFi() {
+        let a = NSAlert()
+        a.messageText = "Mount по Wi-Fi — медленно, крайний случай"
+        a.informativeText = """
+        Маунт в Finder по Wi-Fi тормозит (Finder + превью macOS читают файлы целиком) и может подвиснуть при обрыве связи.
+
+        Лучше:
+        • Браузить → приложение-браузер (ADB Explorer / FileDroid)
+        • Смотреть видео → из браузера, откроется в IINA (стрим, без выкачки)
+        • Переносить файлы → по SSH (rclone / Cyberduck)
+
+        Монтировать по Wi-Fi стоит только если другой Mac-программе позарез нужен путь к файлу, а кабеля нет.
+        """
+        a.addButton(withTitle: "Всё равно смонтировать")
+        a.addButton(withTitle: "Отмена")
+        if a.runModal() != .alertFirstButtonReturn { return }
         run(mountScript, ["wifi"]) { code, out in
             if code == 0 { self.openWiFi() } else { self.alert("Wi-Fi mount failed", out) }
         }
