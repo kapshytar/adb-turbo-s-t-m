@@ -1,0 +1,4 @@
+theme: jekyll-theme-cayman
+title: "ADB Turbo S/T — Mount Android as a fast external drive on macOS"
+description: "Free & open-source: turn any old Android phone into a fast, mounted external drive for your Mac. No-copy streaming over ADB + rclone + macFUSE. A free alternative to MacDroid / Android File Transfer."
+show_downloads: true
