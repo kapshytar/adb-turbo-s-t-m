@@ -4,8 +4,9 @@ import Cocoa
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
     let adb        = NSString(string: "~/Library/Android/sdk/platform-tools/adb").expandingTildeInPath
-    let upScript   = "/Users/v/PhoneAsExtStorage/adbfs-rootless/phone-stream-up.sh"
-    let downScript = "/Users/v/PhoneAsExtStorage/adbfs-rootless/phone-stream-down.sh"
+    // скрипты лежат внутри .app (Resources) — портативно, без привязки к чужому пути
+    var upScript:   String { (Bundle.main.resourcePath ?? "") + "/phone-stream-up.sh" }
+    var downScript: String { (Bundle.main.resourcePath ?? "") + "/phone-stream-down.sh" }
     let mountPoint = NSString(string: "~/PhoneStream").expandingTildeInPath
     var busy = false
     var transport: String {                       // "auto" | "wifi" | "usb"
@@ -67,8 +68,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addTransport(menu, "USB (турбо)", "usb", usb)
         menu.addItem(.separator())
         menu.addItem(item("Переподключить", #selector(reconnect), "r"))
+        menu.addItem(item("Зеркало экрана", #selector(mirror), ""))
         menu.addItem(.separator())
         menu.addItem(item("Выход", #selector(quit), "q"))
+    }
+
+    func scrcpyPath() -> String? {
+        for p in ["/usr/local/bin/scrcpy", "/opt/homebrew/bin/scrcpy"]
+            where FileManager.default.isExecutableFile(atPath: p) { return p }
+        return nil
+    }
+    func pickDeviceSerial() -> String? {
+        let usb = sh("\(adb) devices | awk '/\\tdevice$/{print $1}' | grep -v _adb-tls | grep -v ':' | head -1")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !usb.isEmpty { return usb }
+        let wifi = sh("\(adb) devices | awk '/\\tdevice$/{print $1}' | grep -E '_adb-tls|:' | head -1")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return wifi.isEmpty ? nil : wifi
+    }
+    @objc func mirror() {
+        guard let scr = scrcpyPath() else {
+            let a = NSAlert(); a.messageText = "scrcpy не установлен"
+            a.informativeText = "Зеркало экрана работает через scrcpy. Установить через Homebrew?"
+            a.addButton(withTitle: "Установить (brew)"); a.addButton(withTitle: "Отмена")
+            if a.runModal() == .alertFirstButtonReturn {
+                run(["-lc", "brew install scrcpy"]) { code, out in
+                    self.alert(code == 0 ? "scrcpy установлен" : "Не удалось установить",
+                               code == 0 ? "Готово — нажми «Зеркало экрана» снова." : out)
+                }
+            }
+            return
+        }
+        guard let serial = pickDeviceSerial() else {
+            alert("Телефон не подключён", "Сначала подключи телефон (USB или Wi-Fi)."); return
+        }
+        let t = Process(); t.launchPath = "/bin/bash"
+        t.arguments = ["-c", "ADB=\(adb) \(scr) -s \(serial) >/dev/null 2>&1 &"]
+        try? t.run()
     }
     func addTransport(_ menu: NSMenu, _ title: String, _ key: String, _ available: Bool) {
         let i = NSMenuItem(title: title + (available ? "" : "  (недоступно)"),

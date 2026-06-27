@@ -5,9 +5,9 @@
 
 set -euo pipefail
 
-ADB_DIR="/Users/v/Library/Android/sdk/platform-tools"
-MOUNTPOINT="/Users/v/Phone"
-ADBFS_BIN="/Users/v/PhoneAsExtStorage/adbfs-rootless/adbfs"
+ADB_DIR="$HOME/Library/Android/sdk/platform-tools"
+MOUNTPOINT="$HOME/Phone"
+ADBFS_BIN="$HOME/PhoneAsExtStorage/adbfs-rootless/adbfs"
 ADBFS_ROOT="/storage/emulated/0"
 WAIT_SECS=30
 RETRY_INTERVAL=3

@@ -15,7 +15,7 @@
 ## Установка
 
 ```bash
-cd /Users/v/PhoneAsExtStorage/adbfs-rootless/launchd
+cd ~/PhoneAsExtStorage/adbfs-rootless/launchd
 chmod +x install.sh uninstall.sh
 ./install.sh
 ```
@@ -80,7 +80,7 @@ launchctl kickstart -k gui/$(id -u)/com.kapshytar.adbfs-phone
 cat /tmp/adbfs-phone.err.log
 
 # Проверяем adb видит устройство
-/Users/v/Library/Android/sdk/platform-tools/adb devices
+~/Library/Android/sdk/platform-tools/adb devices
 
 # Перезапустить агент вручную
 launchctl kickstart -k gui/$(id -u)/com.kapshytar.adbfs-phone

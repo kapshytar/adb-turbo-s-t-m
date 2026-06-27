@@ -9,7 +9,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/v/PhoneAsExtStorage/adbfs-rootless/launchd/adbfs-launchd-run.sh</string>
+        <string>__HOME__/PhoneAsExtStorage/adbfs-rootless/launchd/adbfs-launchd-run.sh</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -36,9 +36,9 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>HOME</key>
-        <string>/Users/v</string>
+        <string>__HOME__</string>
         <key>PATH</key>
-        <string>/Users/v/Library/Android/sdk/platform-tools:/usr/local/bin:/usr/bin:/bin</string>
+        <string>__HOME__/Library/Android/sdk/platform-tools:/usr/local/bin:/usr/bin:/bin</string>
         <key>ADBFS_ROOT</key>
         <string>/storage/emulated/0</string>
     </dict>
