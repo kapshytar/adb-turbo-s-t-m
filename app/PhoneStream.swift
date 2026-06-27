@@ -53,6 +53,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return sh("\(adb) -s \(dev) shell getprop ro.product.model")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
+    // имя секции по конкретному устройству канала: "SM-G975F (USB)" / "SM-G975F (Wi-Fi)"
+    func transportLabel(_ wifi: Bool, _ chan: String) -> String {
+        let pat = wifi ? "grep -E ':|_adb-tls'" : "grep -v _adb-tls | grep -v ':'"
+        let dev = sh("\(adb) devices | awk '/\\tdevice$/{print $1}' | \(pat) | head -1")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if dev.isEmpty { return "\(chan) volume" }
+        let m = sh("\(adb) -s \(dev) shell getprop ro.product.model")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return m.isEmpty ? "\(chan) volume" : "\(m) (\(chan))"
+    }
 
     // ---- построить меню ----
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -86,7 +96,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         // ---- секция USB volume ----
-        let usbHdr = NSMenuItem(title: "USB volume", action: nil, keyEquivalent: "")
+        let usbHdr = NSMenuItem(title: transportLabel(false, "USB"), action: nil, keyEquivalent: "")
         usbHdr.isEnabled = false
         menu.addItem(usbHdr)
         if usbM {
@@ -102,7 +112,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         // ---- секция Wi-Fi volume ----
-        let wifiHdr = NSMenuItem(title: "Wi-Fi volume", action: nil, keyEquivalent: "")
+        let wifiHdr = NSMenuItem(title: transportLabel(true, "Wi-Fi"), action: nil, keyEquivalent: "")
         wifiHdr.isEnabled = false
         menu.addItem(wifiHdr)
         if wifiM {
@@ -185,16 +195,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
     @objc func reconnect() {
-        // размонтировать оба и смонтировать заново
-        run(unmountScript, ["all"]) { _, _ in
-            self.run(self.mountAllScript) { code, out in
-                if code == 0 {
-                    if self.usbMounted()  { self.openUSB() }
-                    if self.wifiMounted() { self.openWiFi() }
-                } else {
-                    self.alert("Reconnect failed", out)
-                }
-            }
+        // НЕ трогаем уже рабочие тома — только поднимаем то, что упало (идемпотентно).
+        // Для конкретного канала используй Mount/Unmount в его секции (USB или Wi-Fi).
+        run(mountAllScript) { code, out in
+            if code != 0 { self.alert("Reconnect failed", out) }
         }
     }
 
