@@ -161,6 +161,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let wifiHdr = NSMenuItem(title: transportLabel(true, "Wi-Fi"), action: nil, keyEquivalent: "")
         wifiHdr.isEnabled = false
         menu.addItem(wifiHdr)
+        // постоянный варнинг (виден всегда, не только когда не смонтировано)
+        let wifiWarn = NSMenuItem(title: "  ⚠︎ Finder по Wi-Fi медленный — для просмотра бери браузер/IINA/SSH", action: nil, keyEquivalent: "")
+        wifiWarn.isEnabled = false
+        menu.addItem(wifiWarn)
         if wifiM {
             menu.addItem(item("  Open Wi-Fi folder", #selector(openWiFi), ""))
             menu.addItem(item("  Unmount Wi-Fi", #selector(unmountWiFi), ""))
