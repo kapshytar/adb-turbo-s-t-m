@@ -7,6 +7,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
     let adb = NSString(string: "~/Library/Android/sdk/platform-tools/adb").expandingTildeInPath
     var busy = false
+    var failed = Set<String>()   // каналы, где последняя попытка подключения не удалась (красные)
 
     // ---- пути к скриптам из бандла ----
     var mountScript:    String { (Bundle.main.resourcePath ?? "") + "/phone-mount.sh" }
@@ -82,6 +83,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             _ = sh("EP=$(\(adb) mdns services 2>/dev/null | awk '/_adb-tls-connect._tcp/{print $NF; exit}'); [ -n \"$EP\" ] && \(adb) connect \"$EP\" >/dev/null 2>&1")
         }
     }
+    // Wi-Fi adb через mDNS / динамический порт (НЕ 5555)
+    func wdMdnsOn() -> Bool {
+        !sh("\(adb) devices | awk '/\\tdevice$/{print $1}' | grep -E '_adb-tls|:[0-9]+' | grep -v ':5555'")
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    // Wi-Fi adb на фикс-порт 5555
+    func wd5555On() -> Bool {
+        !sh("\(adb) devices | grep ':5555' | grep -w device")
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
     func phoneModel() -> String {
         let dev = sh("\(adb) devices | awk '/\\tdevice$/{print $1}' | head -1")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -137,21 +148,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // ---- ЦЕНТР ПОДКЛЮЧЕНИЯ: прозрачный статус трёх каналов ----
         autoConnectWD()  // админский канал не выключаем; вещает → подключаемся сами
-        let chHdr = NSMenuItem(title: "Каналы связи (наведи для подсказки)", action: nil, keyEquivalent: ""); chHdr.isEnabled = false
+        let chHdr = NSMenuItem(title: "Каналы (клик = вкл/выкл, наведи для подсказки)", action: nil, keyEquivalent: ""); chHdr.isEnabled = false
         menu.addItem(chHdr)
-        let lUSB = NSMenuItem(title: "  \(usbAdbOn() ? "🟢" : "⚪️") USB (кабель) — файлы + команды", action: nil, keyEquivalent: ""); lUSB.isEnabled = false
-        lUSB.toolTip = "Кабель (adb). Самый быстрый и стабильный. Файлы: push/pull. Команды: pm, scrcpy, logcat. «Mount USB» — папка телефона в Finder."
-        menu.addItem(lUSB)
-        let lSSH = NSMenuItem(title: "  \(wifiSshOn() ? "🟢" : "⚪️") Wi-Fi (SSH) — файлы без кабеля", action: nil, keyEquivalent: ""); lSSH.isEnabled = false
-        lSSH.toolTip = "Прямой SSH по Wi-Fi (порт 8022). ГЛАВНЫЙ канал для ФАЙЛОВ без кабеля: браузинг, стрим в IINA, перенос ~25 МБ/с. «Mount Wi-Fi» монтирует именно по SSH. Wireless Debugging не нужен."
-        menu.addItem(lSSH)
-        let wdConn = wdConnected(), wdAvail = wirelessDebugOn()
-        let wdDot = wdConn ? "🟢" : (wdAvail ? "🟡" : "⚪️")
-        let wdTxt = wdConn ? "Wireless-debug — админ-канал (adb), подключён"
-                  : (wdAvail ? "Wireless-debug — доступен, подключаюсь…" : "Wireless-debug — выкл (включи на телефоне)")
-        let lWD  = NSMenuItem(title: "  \(wdDot) \(wdTxt)", action: nil, keyEquivalent: ""); lWD.isEnabled = false
-        lWD.toolTip = "АДМИНСКИЙ/сигнальный канал (adb по Wi-Fi): команды управления телефоном — pm, settings, scrcpy, logcat. НЕ для файлов (файлы по SSH). Тумблер включается на телефоне; удалённо включить нельзя, но если включён — подключаюсь сам и держу, не выключаю."
-        menu.addItem(lWD)
+        // 4 канала раздельно, каждый — кликабельный тумблер; красный = не удалось поднять
+        addChannel(menu, "USB (кабель) — файлы + команды", usbAdbOn(), "usb", #selector(toggleUSB),
+                   "Кабель (adb). Файлы push/pull + команды (pm, scrcpy). Клик — пере-подключить (re-enumerate). Если порт усыплён — передёрни дата-кабель.")
+        addChannel(menu, "Wi-Fi SSH (8022) — файлы без кабеля", wifiSshOn(), "ssh", #selector(toggleSSH),
+                   "Прямой SSH по Wi-Fi (8022). Главный канал для файлов/стрима, ~25 МБ/с, мультипоток. Клик — проверить/перезапустить sshd. В adb-приложениях НЕ виден.")
+        addChannel(menu, "Wireless-debug (mDNS) — админ adb", wdMdnsOn(), "wdmdns", #selector(toggleWDmdns),
+                   "adb по Wi-Fi через mDNS (динамический порт). Админ-команды: scrcpy, pm, logcat. Клик: выкл→подключить, вкл→отключить. Сам тумблер WD включается на телефоне.")
+        addChannel(menu, "adb TCP 5555 (легаси) — админ adb", wd5555On(), "tcp5555", #selector(toggle5555),
+                   "Легаси adb-over-tcp на фикс-порт 5555 (старый способ, если adbd слушает). Не переживает ребут телефона. Клик: выкл→connect 5555, вкл→disconnect.")
         menu.addItem(item("  ⓘ Какой канал для чего", #selector(helpChannels), ""))
         menu.addItem(item("  Проверить все каналы", #selector(checkAll), ""))
         menu.addItem(item("  Проверить SSH", #selector(checkSSH), ""))
@@ -394,6 +401,54 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.alert(title, out.isEmpty
                     ? "Нет ответа от телефона по SSH.\nЕсли sshd упал полностью — запусти на телефоне виджет «Start-SSHD» (Termux:Widget) или перезагрузи телефон (Termux:Boot поднимет sshd сам)."
                     : out)
+            }
+        }
+    }
+    // кликабельная строка канала: 🟢 работает / 🔴 не удалось / ⚪️ выкл
+    func addChannel(_ menu: NSMenu, _ text: String, _ working: Bool, _ key: String, _ sel: Selector, _ tip: String) {
+        let dot = working ? "🟢" : (failed.contains(key) ? "🔴" : "⚪️")
+        let title = "  \(dot) \(text)"
+        let it = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+        it.target = self
+        it.toolTip = tip
+        if !working && failed.contains(key) {
+            it.attributedTitle = NSAttributedString(string: title, attributes: [.foregroundColor: NSColor.systemRed])
+        }
+        menu.addItem(it)
+    }
+
+    // ---- тумблеры каналов: трогают ТОЛЬКО свой канал, рабочее не дёргают ----
+    @objc func toggleUSB() {
+        if usbAdbOn() { return }   // работает — не трогаем
+        run("/bin/bash", ["-c", "\(adb) reconnect offline >/dev/null 2>&1; sleep 1; \(adb) devices -l | grep -q usb: && echo OK"]) { _, out in
+            if out.contains("OK") { self.failed.remove("usb") }
+            else { self.failed.insert("usb"); self.alert("USB не поднялся", "Порт, похоже, усыплён. Передёрни ДАТА-кабель (не зарядный) или другой порт — софтом не разбудить.") }
+        }
+    }
+    @objc func toggleSSH() {
+        if wifiSshOn() { alert("Wi-Fi SSH", "Работает (порт 8022). Это серверный канал на телефоне — выключать его тут незачем."); return }
+        run("/bin/bash", ["-c", "IP=$(cat ~/.phone_wifi_ip 2>/dev/null); IP=${IP:-192.168.1.202}; KEY=$HOME/.ssh/id_ed25519_phone; ssh -i \"$KEY\" -p 8022 -o StrictHostKeyChecking=no -o ConnectTimeout=6 u0_a520@\"$IP\" 'pgrep -x sshd >/dev/null || sshd' 2>/dev/null; sleep 1; nc -z -G2 \"$IP\" 8022 && echo OK"]) { _, out in
+            if out.contains("OK") { self.failed.remove("ssh") }
+            else { self.failed.insert("ssh"); self.alert("SSH не отвечает", "Телефон недоступен по SSH. Запусти на телефоне виджет «Start-SSHD» или подожди — watchdog поднимет сам.") }
+        }
+    }
+    @objc func toggleWDmdns() {
+        if wdMdnsOn() {  // выкл: отключить mDNS-вход(ы), НЕ трогая 5555/USB
+            run("/bin/bash", ["-c", "for d in $(\(adb) devices | awk '/device$/{print $1}' | grep -E '_adb-tls|:[0-9]+' | grep -v ':5555'); do \(adb) disconnect \"$d\" >/dev/null 2>&1; done; echo done"]) { _, _ in }
+        } else {        // вкл: warmup mDNS (без kill-server, чтобы не рвать другие) + connect
+            run("/bin/bash", ["-c", "\(adb) mdns services >/dev/null 2>&1; sleep 1; EP=$(\(adb) mdns services 2>/dev/null | awk '/_adb-tls-connect._tcp/{print $NF; exit}'); [ -n \"$EP\" ] && \(adb) connect \"$EP\" >/dev/null 2>&1; sleep 1; \(adb) devices | awk '/device$/{print $1}' | grep -E '_adb-tls|:[0-9]+' | grep -v ':5555' | grep -q . && echo OK"]) { _, out in
+                if out.contains("OK") { self.failed.remove("wdmdns") }
+                else { self.failed.insert("wdmdns"); self.alert("Wireless-debug не подключился", "Включи тумблер Wireless Debugging на телефоне (Настройки → Для разработчиков). Удалённо включить нельзя. Если включён, но не виден — жми «Подключить всё» (перезапуск adb-сервера).") }
+            }
+        }
+    }
+    @objc func toggle5555() {
+        if wd5555On() {
+            run("/bin/bash", ["-c", "IP=$(cat ~/.phone_wifi_ip 2>/dev/null); IP=${IP:-192.168.1.202}; \(adb) disconnect \"$IP:5555\" >/dev/null 2>&1; echo done"]) { _, _ in }
+        } else {
+            run("/bin/bash", ["-c", "IP=$(cat ~/.phone_wifi_ip 2>/dev/null); IP=${IP:-192.168.1.202}; nc -z -G1 \"$IP\" 5555 && \(adb) connect \"$IP:5555\" >/dev/null 2>&1; sleep 1; \(adb) devices | grep ':5555' | grep -wq device && echo OK"]) { _, out in
+                if out.contains("OK") { self.failed.remove("tcp5555") }
+                else { self.failed.insert("tcp5555"); self.alert("5555 недоступен", "adbd не слушает 5555 (после ребута телефона пропадает). Сначала подними телефон по USB или Wireless-debug.") }
             }
         }
     }
