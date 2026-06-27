@@ -11,7 +11,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ note: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "📱"
+        if let path = Bundle.main.resourcePath,
+           let img = NSImage(contentsOfFile: path + "/menubar.png") {
+            img.isTemplate = true
+            img.size = NSSize(width: 18, height: 18)
+            statusItem.button?.image = img
+        } else {
+            statusItem.button?.title = "📱"
+        }
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
