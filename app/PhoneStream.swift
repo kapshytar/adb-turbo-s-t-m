@@ -417,7 +417,7 @@ SPEED CHEAT-SHEET
     @objc func downloadToPhone() {
         let a = NSAlert()
         a.messageText = "Download from internet to phone"
-        a.informativeText = "Paste a URL — the file goes straight to the phone (/sdcard/Download), bypassing the Mac disk. Requires a live Wi-Fi SSH channel."
+        a.informativeText = "Paste a URL — the file goes straight to the phone (/sdcard/Download), bypassing the Mac disk. Auto-picks the best channel (USB → Wi-Fi SSH)."
         a.addButton(withTitle: "Download")
         a.addButton(withTitle: "Cancel")
         let tf = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
@@ -433,20 +433,12 @@ SPEED CHEAT-SHEET
             alert("Only http/https URLs", "For security, only http:// and https:// URLs are supported.")
             return
         }
-        // FIX #4 + #5: portable rclone path; FIX #5: IP from ~/.phone_wifi_ip (no hardcode)
-        let script = """
-        URL="$1"
-        IP=$(cat ~/.phone_wifi_ip 2>/dev/null)
-        if [ -z "$IP" ]; then echo "Phone IP unknown. Connect once over USB to cache it."; exit 1; fi
-        KEY=$HOME/.ssh/id_ed25519_phone
-        if ! nc -z -G2 "$IP" 8022 >/dev/null 2>&1; then echo "No SSH link to the phone (8022). Bring up Wi-Fi SSH first."; exit 1; fi
-        RCLONE=$(command -v rclone 2>/dev/null || echo /usr/local/bin/rclone)
-        [ -x "$RCLONE" ] || RCLONE=/opt/homebrew/bin/rclone
-        "$RCLONE" copyurl "$URL" ":sftp,host=$IP,port=8022,user=u0_a520,key_file=$KEY,shell_type=none:/sdcard/Download" --auto-filename -q \
-          && echo "✅ Saved to phone: /sdcard/Download/" \
-          || echo "❌ Failed (check the URL and the SSH link)."
-        """
-        runCmd(script, [url]) { [weak self] _, out in self?.alert("Download to phone", out) }
+        // авто-канал (USB→Wi-Fi) через phone-download.sh — единый «мозг» транспорта
+        let script = (Bundle.main.resourcePath ?? "") + "/phone-download.sh"
+        guard FileManager.default.fileExists(atPath: script) else { alert("Download script missing", script); return }
+        run(script, [url]) { [weak self] _, out in
+            self?.alert("Download to phone", out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Done." : out)
+        }
     }
 
     // ---- general ----
