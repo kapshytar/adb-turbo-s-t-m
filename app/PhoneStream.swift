@@ -142,12 +142,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let script = (Bundle.main.resourcePath ?? "") + "/phone-keepalive.sh"
         guard FileManager.default.fileExists(atPath: script) else { return }
         let p = Process(); p.launchPath = "/bin/bash"
-        p.arguments = ["-c", "pkill -f phone-keepalive.sh 2>/dev/null; rmdir /tmp/phone-keepalive.lock 2>/dev/null; exec bash \"\(script)\""]
+        // -9: keepalive может зависнуть на adb-вызове (D-state) и не реагировать на TERM →
+        // тогда при перезапуске трея старые инстансы копились бы. KILL гарантированно снимает их.
+        p.arguments = ["-c", "pkill -9 -f phone-keepalive.sh 2>/dev/null; rmdir /tmp/phone-keepalive.lock 2>/dev/null; exec bash \"\(script)\""]
         try? p.run()
     }
     func stopKeepalive() {
         let p = Process(); p.launchPath = "/bin/bash"
-        p.arguments = ["-c", "pkill -f phone-keepalive.sh 2>/dev/null"]
+        p.arguments = ["-c", "pkill -9 -f phone-keepalive.sh 2>/dev/null"]
         try? p.run(); p.waitUntilExit()
     }
     // ---- proactive watchdog: catches a hanging mount before it wedges the kernel ----

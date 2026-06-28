@@ -112,7 +112,7 @@ if [ "$SSH_OK" = yes ] && [ -n "$AIP" ]; then
     CODE=$(curl -s -o /tmp/test-chunk.bin -w "%{http_code}" -r 0-1023 "http://127.0.0.1:$PORT/$ENC")
     SZ=$(stat -f%z /tmp/test-chunk.bin 2>/dev/null || echo 0)
     if [ "$CODE" = "206" ] && [ "$SZ" -le 2048 ] && [ "$SZ" -gt 0 ]; then ok "range: HTTP 206, $SZ байт (частичный, не весь файл)"; else no "range провал: code=$CODE size=$SZ"; fi
-    pkill -f "rclone serve http.*:$PORT" 2>/dev/null; rm -f /tmp/test-chunk.bin
+    pkill -f "rclone serve http.*:$PORT" 2>/dev/null; rm -f /tmp/test-chunk.bin /tmp/test-stream.log
   fi
 else skip "нет SSH к активному — пропуск стрима"; fi
 
