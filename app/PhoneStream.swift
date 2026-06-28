@@ -259,24 +259,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // дропдаун-список устройств ИНЛАЙН (галочка = активный), дедуп по модели.
         // Всё ниже (каналы и т.д.) привязано к выбранному устройству.
         if !state.devices.isEmpty {
-            // НАСТОЯЩИЙ дропдаун (NSPopUpButton) — выпадает вниз, не сбоку.
-            var uniqueModels: [String] = []
-            for d in state.devices where !uniqueModels.contains(d.model) { uniqueModels.append(d.model) }
-            let container = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 30))
-            let label = NSTextField(labelWithString: "Device:")
-            label.frame = NSRect(x: 14, y: 6, width: 56, height: 18)
-            label.textColor = .secondaryLabelColor
-            label.backgroundColor = .clear
-            container.addSubview(label)
-            let popup = NSPopUpButton(frame: NSRect(x: 72, y: 2, width: 196, height: 24), pullsDown: false)
-            popup.addItems(withTitles: uniqueModels)
-            if !state.activeModel.isEmpty { popup.selectItem(withTitle: state.activeModel) }
-            popup.target = self
-            popup.action = #selector(devicePopupChanged(_:))
-            container.addSubview(popup)
-            let devItem = NSMenuItem()
-            devItem.view = container
-            menu.addItem(devItem)
+            // список устройств ИНЛАЙН (раскрыт вниз прямо в меню, не сбоку), галочка = активный.
+            let hdr = NSMenuItem(title: "Device:", action: nil, keyEquivalent: ""); hdr.isEnabled = false
+            menu.addItem(hdr)
+            var seenModels = Set<String>()
+            for dev in state.devices {
+                if seenModels.contains(dev.model) { continue }
+                seenModels.insert(dev.model)
+                let kinds = Set(state.devices.filter { $0.model == dev.model }.map { $0.kind })
+                    .sorted().joined(separator: "+")
+                let isActive = dev.model == state.activeModel
+                let it = NSMenuItem(title: "   \(dev.model) — \(kinds)", action: #selector(selectDevice(_:)), keyEquivalent: "")
+                it.target = self
+                it.representedObject = dev.model
+                it.state = isActive ? .on : .off
+                menu.addItem(it)
+            }
         }
 
         menu.addItem(.separator())
@@ -567,8 +565,8 @@ SPEED CHEAT-SHEET
     // Записывает серийник в ~/.phone_active_serial, затем обновляет состояние.
     // SSH/Wi-Fi-операции (mount-wifi, stream, upload, download) НЕ затрагиваются —
     // они идут на SSH-сервер по закэшированному IP независимо от этого выбора.
-    @objc func devicePopupChanged(_ sender: NSPopUpButton) {
-        guard let model = sender.titleOfSelectedItem else { return }
+    @objc func selectDevice(_ sender: NSMenuItem) {
+        guard let model = sender.representedObject as? String else { return }
         // МГНОВЕННО обновляем кэш (без ожидания 4с-рефреша), чтобы каналы переключились сразу
         let devs = state.devices
         state.activeModel = model
