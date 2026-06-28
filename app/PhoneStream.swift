@@ -13,6 +13,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var deviceRows: [(model: String, display: String, button: NSButton)] = []
     // пункты каналов — храним ссылки, чтобы обновлять точки ВЖИВУЮ при смене устройства
     var channelItems: [(key: String, text: String, item: NSMenuItem)] = []
+    // заголовки маунт-секций (USB/Wi-Fi) — обновляем модель live при смене устройства
+    var mountHeaders: [(kind: String, item: NSMenuItem)] = []
 
     // FIX #1: cached phone state — populated by background timer, read by menuNeedsUpdate
     struct PhoneState {
@@ -331,9 +333,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         // ---- USB volume ----
-        let usbHdr = NSMenuItem(title: transportLabel(false, "USB"), action: nil, keyEquivalent: "")
+        mountHeaders = []
+        let mdl0 = state.model.isEmpty ? "Phone" : state.model
+        let usbHdr = NSMenuItem(title: "\(mdl0) (USB)", action: nil, keyEquivalent: "")
         usbHdr.isEnabled = false
         menu.addItem(usbHdr)
+        mountHeaders.append((kind: "USB", item: usbHdr))
         if usbM {
             menu.addItem(item("  Open USB folder", #selector(openUSB), ""))
             menu.addItem(item("  Unmount USB", #selector(unmountUSB), ""))
@@ -348,10 +353,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // ---- Wi-Fi volume ----
         // ⚠ прямо в заголовке тома; подробности — при наведении (без отдельной строки)
-        let wifiHdr = NSMenuItem(title: "⚠︎ " + transportLabel(true, "Wi-Fi · SSH"), action: nil, keyEquivalent: "")
+        let wifiHdr = NSMenuItem(title: "⚠︎ \(mdl0) (Wi-Fi · SSH)", action: nil, keyEquivalent: "")
         wifiHdr.isEnabled = false
         wifiHdr.toolTip = "Mounted over Wi-Fi via SSH (NOT Wireless-debug). Finder over Wi-Fi is slow and can hang if the link drops (a watchdog force-unmounts). For viewing/streaming use a browser + IINA, not Finder."
         menu.addItem(wifiHdr)
+        mountHeaders.append((kind: "WiFi", item: wifiHdr))
         if wifiM {
             menu.addItem(item("  Open Wi-Fi folder", #selector(openWiFi), ""))
             menu.addItem(item("  Unmount Wi-Fi", #selector(unmountWiFi), ""))
@@ -596,6 +602,10 @@ SPEED CHEAT-SHEET
         // галочки устройств + точки каналов обновляем ВЖИВУЮ (меню открыто)
         for row in deviceRows { styleDeviceButton(row.button, row.display, row.model == model) }
         refreshChannelItems()
+        // заголовки маунт-секций — модель live
+        for h in mountHeaders {
+            h.item.title = (h.kind == "USB") ? "\(model) (USB)" : "⚠︎ \(model) (Wi-Fi · SSH)"
+        }
         // сохраняем выбор (модель) + фоновый рефреш для точности (каналы перерисуются при переоткрытии)
         runCmd("printf '%s' \"$1\" > ~/.phone_active_model", [model]) { [weak self] _, _ in
             self?.scheduleBackgroundRefresh()
