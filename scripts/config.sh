@@ -47,20 +47,26 @@ write_ip_cache() {
   fi
 }
 
-# PHONE_ACTIVE_FILE — хранит серийник выбранного устройства для adb-операций
-PHONE_ACTIVE_FILE="$HOME/.phone_active_serial"
+# PHONE_ACTIVE_FILE — хранит МОДЕЛЬ выбранного устройства (НЕ серийник:
+# у Wi-Fi серийники летучие — динамический WD-порт меняется, выбор «откатывался»).
+PHONE_ACTIVE_FILE="$HOME/.phone_active_model"
 
-# active_serial — отдаёт серийник ТОЛЬКО если он сохранён И сейчас подключён
+# active_model — выбранная модель (или пусто)
+active_model() { cat "$PHONE_ACTIVE_FILE" 2>/dev/null | tr -d '\r'; }
+
+# active_serial — серийник любого подключённого устройства активной модели
 active_serial() {
-  local s
-  s=$(cat "$PHONE_ACTIVE_FILE" 2>/dev/null | tr -d '\r')
-  [ -n "$s" ] && "$ADB" devices 2>/dev/null | grep -q "^$s[[:space:]]" && echo "$s"
+  local m s mod; m=$(active_model); [ -n "$m" ] || return
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
+    mod=$(_to 6 "$ADB" -s "$s" shell getprop ro.product.model </dev/null 2>/dev/null | tr -d '\r' | tr -d '\n')
+    [ "$mod" = "$m" ] && { echo "$s"; return; }
+  done < <("$ADB" devices 2>/dev/null | awk '$2=="device"{print $1}')
 }
 
-# adb_dev — активный серийник (если подключён) → иначе первый USB
+# adb_dev — серийник активной модели → иначе первый USB
 adb_dev() {
-  local a
-  a=$(active_serial)
+  local a; a=$(active_serial)
   [ -n "$a" ] && { echo "$a"; return; }
   pick_usb
 }

@@ -9,7 +9,7 @@
 set -u
 source "$(cd "$(dirname "$0")" && pwd)/config.sh"
 
-ACTIVE=$(active_serial)
+ACTIVE_MODEL=$(active_model)
 
 serials=(); models=(); kinds=()
 while IFS= read -r line; do
@@ -25,10 +25,10 @@ done < <("$ADB" devices -l 2>/dev/null)
 
 [ "${#serials[@]}" -eq 0 ] && exit 0
 
-# индекс активного
+# индекс активного — по МОДЕЛИ (первое устройство выбранной модели)
 active_idx=-1
-if [ -n "$ACTIVE" ]; then
-  for i in "${!serials[@]}"; do [ "${serials[$i]}" = "$ACTIVE" ] && { active_idx=$i; break; }; done
+if [ -n "$ACTIVE_MODEL" ]; then
+  for i in "${!models[@]}"; do [ "${models[$i]}" = "$ACTIVE_MODEL" ] && { active_idx=$i; break; }; done
 fi
 if [ "$active_idx" -lt 0 ]; then
   for i in "${!serials[@]}"; do [ "${kinds[$i]}" = "USB" ] && { active_idx=$i; break; }; done

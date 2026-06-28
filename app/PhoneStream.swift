@@ -269,7 +269,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let isActive = state.devices.contains { $0.model == dev.model && $0.active }
                 let it = NSMenuItem(title: "\(dev.model) — \(kinds)", action: #selector(selectDevice(_:)), keyEquivalent: "")
                 it.target = self
-                it.representedObject = dev.serial
+                it.representedObject = dev.model   // выбор по МОДЕЛИ (серийники Wi-Fi летучие)
                 it.state = isActive ? .on : .off
                 devMenu.addItem(it)
             }
@@ -542,17 +542,16 @@ SPEED CHEAT-SHEET
         return nil
     }
     func pickDeviceSerial() -> String? {
-        // 1. Проверяем активный серийник из ~/.phone_active_serial
-        //    (adb-уровень; SSH/Wi-Fi-операции идут на кэшированный IP отдельно)
-        let activePath = NSString(string: "~/.phone_active_serial").expandingTildeInPath
+        // 1. Активная МОДЕЛЬ из ~/.phone_active_model → серийник из кэша state.devices
+        //    (предпочитаем USB-вход этой модели). adb-уровень; SSH/Wi-Fi — отдельно.
+        let activePath = NSString(string: "~/.phone_active_model").expandingTildeInPath
         if let saved = try? String(contentsOfFile: activePath, encoding: .utf8) {
-            let s = saved.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !s.isEmpty {
-                // проверяем, что устройство сейчас подключено
-                // awk: первое поле == серийник (adb devices выводит SERIAL\tstatus)
-                let ok = sh("\(adb) devices 2>/dev/null | awk '$1==\"" + s + "\" && $2==\"device\"{found=1} END{exit !found}' && echo y")
-                    .contains("y")
-                if ok { return s }
+            let m = saved.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !m.isEmpty {
+                if let d = state.devices.first(where: { $0.model == m && $0.kind == "USB" })
+                        ?? state.devices.first(where: { $0.model == m }) {
+                    return d.serial
+                }
             }
         }
         // 2. Fallback: первый USB-девайс
@@ -569,9 +568,9 @@ SPEED CHEAT-SHEET
     // SSH/Wi-Fi-операции (mount-wifi, stream, upload, download) НЕ затрагиваются —
     // они идут на SSH-сервер по закэшированному IP независимо от этого выбора.
     @objc func selectDevice(_ sender: NSMenuItem) {
-        guard let serial = sender.representedObject as? String else { return }
-        // безопасная запись: serial передаётся как $1, никакого shell injection
-        runCmd("printf '%s' \"$1\" > ~/.phone_active_serial", [serial]) { [weak self] _, _ in
+        guard let model = sender.representedObject as? String else { return }
+        // пишем МОДЕЛЬ (не серийник) — устойчиво к смене Wi-Fi-порта. $1 = модель, без инъекций.
+        runCmd("printf '%s' \"$1\" > ~/.phone_active_model", [model]) { [weak self] _, _ in
             self?.scheduleBackgroundRefresh()
         }
     }
