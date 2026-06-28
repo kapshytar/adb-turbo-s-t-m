@@ -41,6 +41,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var unmountScript:  String { (Bundle.main.resourcePath ?? "") + "/phone-unmount.sh" }
     var mountAllScript: String { (Bundle.main.resourcePath ?? "") + "/phone-mount-all.sh" }
     var rediscoverScript: String { (Bundle.main.resourcePath ?? "") + "/phone-rediscover.sh" }
+    var cfgPath: String { (Bundle.main.resourcePath ?? "") + "/config.sh" }  // для active_ip в инлайнах
 
     // ---- mount points ----
     let mntUSB  = NSString(string: "~/Phone-USB").expandingTildeInPath
@@ -179,7 +180,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     func wifiAvailable() -> Bool {
         // Wi-Fi = DIRECT SSH channel (not Wireless Debugging). Ping cached IP + open sshd:8022.
-        sh("IP=$(cat ~/.phone_wifi_ip 2>/dev/null); [ -n \"$IP\" ] && ping -c1 -t1 \"$IP\" >/dev/null 2>&1 && nc -z -G2 \"$IP\" 8022 >/dev/null 2>&1 && echo y")
+        sh("IP=$(source "\(cfgPath)" 2>/dev/null; active_ip); [ -n \"$IP\" ] && ping -c1 -t1 \"$IP\" >/dev/null 2>&1 && nc -z -G2 \"$IP\" 8022 >/dev/null 2>&1 && echo y")
             .contains("y")
     }
     func usbAdbOn() -> Bool { usbAvailable() }      // adb over USB (cable)
@@ -762,7 +763,7 @@ RULE:
     }
     @objc func toggleSSH() {
         if state.wifiSsh { alert("Wi-Fi SSH", "Working (port 8022). This is the phone's server channel — no need to turn it off here."); return }
-        runCmd("IP=$(cat ~/.phone_wifi_ip 2>/dev/null); KEY=$HOME/.ssh/id_ed25519_phone; ssh -i \"$KEY\" -p 8022 -o StrictHostKeyChecking=no -o ConnectTimeout=6 u0_a520@\"$IP\" 'pgrep -x sshd >/dev/null || sshd' 2>/dev/null; sleep 1; nc -z -G2 \"$IP\" 8022 && echo OK") { [weak self] _, out in
+        runCmd("IP=$(source "\(cfgPath)" 2>/dev/null; active_ip); KEY=$HOME/.ssh/id_ed25519_phone; ssh -i \"$KEY\" -p 8022 -o StrictHostKeyChecking=no -o ConnectTimeout=6 u0_a520@\"$IP\" 'pgrep -x sshd >/dev/null || sshd' 2>/dev/null; sleep 1; nc -z -G2 \"$IP\" 8022 && echo OK") { [weak self] _, out in
             guard let self = self else { return }
             if out.contains("OK") { self.failed.remove("ssh") }
             else { self.failed.insert("ssh"); self.alert("SSH not responding", "Phone unreachable over SSH. Launch the \"Start-SSHD\" widget on the phone, or wait — the watchdog will bring it up.") }
@@ -781,9 +782,9 @@ RULE:
     }
     @objc func toggle5555() {
         if state.wd5555 {
-            runCmd("IP=$(cat ~/.phone_wifi_ip 2>/dev/null); \(adb) disconnect \"$IP:5555\" >/dev/null 2>&1; echo done") { _, _ in }
+            runCmd("IP=$(source "\(cfgPath)" 2>/dev/null; active_ip); \(adb) disconnect \"$IP:5555\" >/dev/null 2>&1; echo done") { _, _ in }
         } else {
-            runCmd("IP=$(cat ~/.phone_wifi_ip 2>/dev/null); nc -z -G1 \"$IP\" 5555 && \(adb) connect \"$IP:5555\" >/dev/null 2>&1; sleep 1; \(adb) devices | grep ':5555' | grep -wq device && echo OK") { [weak self] _, out in
+            runCmd("IP=$(source "\(cfgPath)" 2>/dev/null; active_ip); nc -z -G1 \"$IP\" 5555 && \(adb) connect \"$IP:5555\" >/dev/null 2>&1; sleep 1; \(adb) devices | grep ':5555' | grep -wq device && echo OK") { [weak self] _, out in
                 guard let self = self else { return }
                 if out.contains("OK") { self.failed.remove("tcp5555") }
                 else { self.failed.insert("tcp5555"); self.alert("5555 unavailable", "adbd isn't listening on 5555 (it disappears after a phone reboot). Bring the phone up via USB or Wireless-debug first.") }
@@ -793,7 +794,7 @@ RULE:
     // FIX #5: IP from ~/.phone_wifi_ip (no hardcode 192.168.1.202 in checkAll)
     @objc func checkAll() {
         sshReport("All channels status", """
-ADB=\(adb); IP=$(cat ~/.phone_wifi_ip 2>/dev/null)
+ADB=\(adb); IP=$(source "\(cfgPath)" 2>/dev/null; active_ip)
 if [ -z "$IP" ]; then echo "Phone IP unknown — connect once over USB to cache it."; IP="(unknown)"; fi
 echo "CHANNELS (can be used in parallel):"
 U=$("$ADB" devices -l 2>/dev/null | grep 'usb:' | awk '{print $1}')
@@ -809,7 +810,7 @@ echo "FOLDERS in Finder (mount):"
     }
     @objc func checkSSH() {
         sshReport("Check SSH channel", """
-IP=$(cat ~/.phone_wifi_ip 2>/dev/null); KEY=$HOME/.ssh/id_ed25519_phone
+IP=$(source "\(cfgPath)" 2>/dev/null; active_ip); KEY=$HOME/.ssh/id_ed25519_phone
 echo "Phone IP: ${IP:-unknown (connect once over USB)}"
 [ -n "$IP" ] && { ping -c1 -t2 "$IP" >/dev/null 2>&1 && echo "ping: OK" || echo "ping: FAIL (phone not on the network)"; }
 [ -n "$IP" ] && { nc -z -G2 "$IP" 8022 >/dev/null 2>&1 && echo "sshd:8022: open" || echo "sshd:8022: closed"; }
@@ -818,7 +819,7 @@ echo "Phone IP: ${IP:-unknown (connect once over USB)}"
     }
     @objc func restartSSH() {
         sshReport("Restart SSH on phone", """
-IP=$(cat ~/.phone_wifi_ip 2>/dev/null); KEY=$HOME/.ssh/id_ed25519_phone
+IP=$(source "\(cfgPath)" 2>/dev/null; active_ip); KEY=$HOME/.ssh/id_ed25519_phone
 [ -z "$IP" ] && { echo "Phone IP unknown. Connect once over USB to cache it."; exit 0; }
 ssh -i "$KEY" -p 8022 -o StrictHostKeyChecking=no -o ConnectTimeout=6 u0_a520@"$IP" 'pgrep -x sshd >/dev/null || sshd; nohup sh ~/sshd-watchdog.sh >/dev/null 2>&1 & sleep 1; echo "sshd pid: $(pgrep -x sshd | tr "\\n" " ")"; echo "watchdog: started"' 2>/dev/null
 """)

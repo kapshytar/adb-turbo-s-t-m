@@ -64,23 +64,35 @@ active_serial() {
   done < <("$ADB" devices 2>/dev/null | awk '$2=="device"{print $1}')
 }
 
-# active_ip — IP именно АКТИВНОГО устройства (wifi-adb serial → IP напрямую;
-# USB → спросить wlan0; иначе phone_ip-кэш).
+# active_ip — IP именно АКТИВНОГО устройства (по модели), БЫСТРО:
+# 1) если у активной модели есть wifi-adb вход (ip:port) → берём его IP из adb devices -l;
+# 2) иначе USB-вход активной модели → спрашиваем wlan0;
+# 3) иначе кэш phone_ip. НЕ использует общий кэш, который может быть от ДРУГОГО телефона.
 active_ip() {
-  local s ip
-  s=$(active_serial)
-  # wifi-adb: serial вида IP:PORT
-  case "$s" in
-    *:*)
-      echo "${s%%:*}"; return ;;
-  esac
-  # USB: спросить wlan0 через adb (</dev/null чтобы не есть stdin)
-  if [ -n "$s" ]; then
-    ip=$(_to 8 "$ADB" -s "$s" shell "ip -f inet addr show wlan0 2>/dev/null" </dev/null 2>/dev/null \
-         | awk '/inet /{print $2}' | cut -d/ -f1 | tr -d '\r' | head -1)
-    if [ -n "$ip" ]; then echo "$ip"; return; fi
+  local m ip us
+  m=$(active_model)
+  if [ -n "$m" ]; then
+    # IP wifi-входа активной модели (без getprop — модель из поля model:)
+    ip=$("$ADB" devices -l 2>/dev/null | awk -v m="$m" '
+      / device / {
+        serial=$1; mod=""
+        for(i=2;i<=NF;i++){ if($i ~ /^model:/){ mod=substr($i,7); gsub(/_/,"-",mod) } }
+        if(mod==m && serial ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:/){ split(serial,a,":"); print a[1]; exit }
+      }')
+    [ -n "$ip" ] && { echo "$ip"; return; }
+    # USB-вход активной модели → wlan0
+    us=$("$ADB" devices -l 2>/dev/null | awk -v m="$m" '
+      / device .*usb:/ {
+        serial=$1; mod=""
+        for(i=2;i<=NF;i++){ if($i ~ /^model:/){ mod=substr($i,7); gsub(/_/,"-",mod) } }
+        if(mod==m){ print serial; exit }
+      }')
+    if [ -n "$us" ]; then
+      ip=$(_to 8 "$ADB" -s "$us" shell "ip -f inet addr show wlan0 2>/dev/null" </dev/null 2>/dev/null \
+           | awk '/inet /{print $2}' | cut -d/ -f1 | tr -d '\r' | head -1)
+      [ -n "$ip" ] && { echo "$ip"; return; }
+    fi
   fi
-  # fallback: кэш
   phone_ip
 }
 
