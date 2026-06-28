@@ -278,11 +278,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let b = NSButton(frame: NSRect(x: 14, y: 0, width: 284, height: 20))
                 b.isBordered = false
                 b.alignment = .left
-                b.font = NSFont.menuFont(ofSize: 0)
-                b.title = (active ? "✓ " : "    ") + display
                 b.tag = idx
                 b.target = self
                 b.action = #selector(deviceRowClicked(_:))
+                styleDeviceButton(b, display, active)
                 v.addSubview(b)
                 let mi = NSMenuItem(); mi.view = v
                 menu.addItem(mi)
@@ -593,7 +592,7 @@ SPEED CHEAT-SHEET
         state.wdMdns  = devs.contains { $0.model == model && $0.kind == "Wi-Fi" && !$0.serial.contains(":5555") }
         state.wifiSsh = state.wifiSsh && devs.contains { $0.model == model && $0.kind == "Wi-Fi" }
         // галочки устройств + точки каналов обновляем ВЖИВУЮ (меню открыто)
-        for row in deviceRows { row.button.title = (row.model == model ? "✓ " : "    ") + row.display }
+        for row in deviceRows { styleDeviceButton(row.button, row.display, row.model == model) }
         refreshChannelItems()
         // сохраняем выбор (модель) + фоновый рефреш для точности (каналы перерисуются при переоткрытии)
         runCmd("printf '%s' \"$1\" > ~/.phone_active_model", [model]) { [weak self] _, _ in
@@ -709,6 +708,15 @@ RULE:
         }
         menu.addItem(it)
         channelItems.append((key: key, text: text, item: it))
+    }
+
+    // стиль кнопки устройства: активный — белый+жирный с ✓, остальные — приглушённые
+    func styleDeviceButton(_ b: NSButton, _ display: String, _ active: Bool) {
+        let color: NSColor = active ? .labelColor : .secondaryLabelColor
+        let font = active ? NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
+                          : NSFont.menuFont(ofSize: 0)
+        let title = (active ? "✓ " : "     ") + display
+        b.attributedTitle = NSAttributedString(string: title, attributes: [.foregroundColor: color, .font: font])
     }
 
     func channelWorking(_ key: String) -> Bool {
