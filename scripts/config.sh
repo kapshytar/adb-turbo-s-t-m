@@ -47,6 +47,24 @@ write_ip_cache() {
   fi
 }
 
+# PHONE_ACTIVE_FILE — хранит серийник выбранного устройства для adb-операций
+PHONE_ACTIVE_FILE="$HOME/.phone_active_serial"
+
+# active_serial — отдаёт серийник ТОЛЬКО если он сохранён И сейчас подключён
+active_serial() {
+  local s
+  s=$(cat "$PHONE_ACTIVE_FILE" 2>/dev/null | tr -d '\r')
+  [ -n "$s" ] && "$ADB" devices 2>/dev/null | grep -q "^$s[[:space:]]" && echo "$s"
+}
+
+# adb_dev — активный серийник (если подключён) → иначе первый USB
+adb_dev() {
+  local a
+  a=$(active_serial)
+  [ -n "$a" ] && { echo "$a"; return; }
+  pick_usb
+}
+
 # pick_usb — вернуть serial USB-устройства (первое) или пустую строку
 pick_usb() { "$ADB" devices -l 2>/dev/null | awk '/ device / && /usb:/ {print $1}' | head -1; }
 

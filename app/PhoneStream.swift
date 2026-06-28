@@ -19,6 +19,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var wifiSsh     = false
         var wdMdns      = false
         var wd5555      = false
+        // Список подключённых adb-устройств для подменю выбора.
+        // Влияет только на adb-операции (USB-mount, scrcpy, cache).
+        // SSH/Wi-Fi-операции (mount-wifi, stream, upload, download) идут на
+        // SSH-сервер по закэшированному IP — devices их НЕ затрагивает.
+        var devices: [(serial: String, model: String, kind: String, active: Bool)] = []
+        var activeModel = ""
     }
     var state = PhoneState()
     var refreshTimer: Timer?
@@ -81,6 +87,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                 }
             }
+            // Парсим phone-devices.sh → s.devices и s.activeModel
+            // (adb-уровень; SSH/Wi-Fi-операции идут на кэшированный IP отдельно)
+            let devScript = (Bundle.main.resourcePath ?? "") + "/phone-devices.sh"
+            if FileManager.default.fileExists(atPath: devScript) {
+                let devOut = self.sh("/bin/bash \"\(devScript)\"")
+                var devList: [(serial: String, model: String, kind: String, active: Bool)] = []
+                for line in devOut.components(separatedBy: "\n") {
+                    let parts = line.components(separatedBy: "\t")
+                    guard parts.count >= 4 else { continue }
+                    let serial = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                    let model  = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                    let kind   = parts[2].trimmingCharacters(in: .whitespacesAndNewlines)
+                    let active = parts[3].trimmingCharacters(in: .whitespacesAndNewlines) == "*"
+                    guard !serial.isEmpty else { continue }
+                    devList.append((serial: serial, model: model, kind: kind, active: active))
+                }
+                s.devices = devList
+                s.activeModel = devList.first(where: { $0.active })?.model ?? devList.first?.model ?? s.model
+            }
+
             // FIX #1: autoConnectWD moved here — side-effects belong in background, not in menu drawing
             self.autoConnectWD()
             DispatchQueue.main.async { [weak self] in
@@ -201,10 +227,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if usbM  { mounted.append("USB") }
         if wifiM { mounted.append("Wi-Fi") }
         let mountedStr = mounted.isEmpty ? "no folders mounted" : "folders: " + mounted.joined(separator: "+")
-        let statusTitle = "\(reach ? "●" : "○") \(model.isEmpty ? (reach ? "Connected" : "Phone not found") : model) — \(mountedStr)"
+        var statusTitle = "\(reach ? "●" : "○") \(model.isEmpty ? (reach ? "Connected" : "Phone not found") : model) — \(mountedStr)"
+        // Если подключено несколько устройств — показываем активное в статусе
+        if state.devices.count > 1 && !state.activeModel.isEmpty {
+            statusTitle += " · active: \(state.activeModel)"
+        }
         let st = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
         st.isEnabled = false
         menu.addItem(st)
+
+        // ---- подменю выбора устройства (только если устройств > 1) ----
+        // Влияет на adb-операции (USB-mount, scrcpy, cache).
+        // SSH/Wi-Fi-операции (mount-wifi, stream, upload, download) идут на
+        // SSH-сервер по закэшированному IP — это подменю их НЕ затрагивает.
+        if state.devices.count > 1 {
+            let devMenu = NSMenu(title: "Device")
+            for dev in state.devices {
+                let title = "\(dev.model) — \(dev.kind)"
+                let it = NSMenuItem(title: title, action: #selector(selectDevice(_:)), keyEquivalent: "")
+                it.target = self
+                it.representedObject = dev.serial
+                if dev.active { it.state = .on }
+                devMenu.addItem(it)
+            }
+            let devItem = NSMenuItem(title: "Device", action: nil, keyEquivalent: "")
+            devItem.submenu = devMenu
+            menu.addItem(devItem)
+        }
+
         menu.addItem(.separator())
 
         // ---- CONNECTION CENTER: transparent status of the 4 channels ----
@@ -468,13 +518,40 @@ SPEED CHEAT-SHEET
         return nil
     }
     func pickDeviceSerial() -> String? {
+        // 1. Проверяем активный серийник из ~/.phone_active_serial
+        //    (adb-уровень; SSH/Wi-Fi-операции идут на кэшированный IP отдельно)
+        let activePath = NSString(string: "~/.phone_active_serial").expandingTildeInPath
+        if let saved = try? String(contentsOfFile: activePath, encoding: .utf8) {
+            let s = saved.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !s.isEmpty {
+                // проверяем, что устройство сейчас подключено
+                // awk: первое поле == серийник (adb devices выводит SERIAL\tstatus)
+                let ok = sh("\(adb) devices 2>/dev/null | awk '$1==\"" + s + "\" && $2==\"device\"{found=1} END{exit !found}' && echo y")
+                    .contains("y")
+                if ok { return s }
+            }
+        }
+        // 2. Fallback: первый USB-девайс
         let usb = sh("\(adb) devices | awk '/\\tdevice$/{print $1}' | grep -v _adb-tls | grep -v ':' | head -1")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if !usb.isEmpty { return usb }
+        // 3. Fallback: любой Wi-Fi adb
         let wifi = sh("\(adb) devices | awk '/\\tdevice$/{print $1}' | grep -E '_adb-tls|:' | head -1")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return wifi.isEmpty ? nil : wifi
     }
+    // ---- выбор активного устройства (adb-уровень) ----
+    // Записывает серийник в ~/.phone_active_serial, затем обновляет состояние.
+    // SSH/Wi-Fi-операции (mount-wifi, stream, upload, download) НЕ затрагиваются —
+    // они идут на SSH-сервер по закэшированному IP независимо от этого выбора.
+    @objc func selectDevice(_ sender: NSMenuItem) {
+        guard let serial = sender.representedObject as? String else { return }
+        // безопасная запись: serial передаётся как $1, никакого shell injection
+        runCmd("printf '%s' \"$1\" > ~/.phone_active_serial", [serial]) { [weak self] _, _ in
+            self?.scheduleBackgroundRefresh()
+        }
+    }
+
     // FIX #2: serial passed as positional $1 to avoid shell injection
     @objc func mirror() {
         guard let scr = scrcpyPath() else {
