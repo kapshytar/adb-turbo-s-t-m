@@ -11,6 +11,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var failed = Set<String>()   // channels whose last connect attempt failed (shown red)
     // строки выбора устройства (кастомные view-кнопки: клик НЕ закрывает меню, галочка live)
     var deviceRows: [(model: String, display: String, button: NSButton)] = []
+    // пункты каналов — храним ссылки, чтобы обновлять точки ВЖИВУЮ при смене устройства
+    var channelItems: [(key: String, text: String, item: NSMenuItem)] = []
 
     // FIX #1: cached phone state — populated by background timer, read by menuNeedsUpdate
     struct PhoneState {
@@ -295,6 +297,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // FIX #1: autoConnectWD() moved to background refresh — removed from here
         let chHdr = NSMenuItem(title: "Channels (click to toggle · hover for help)", action: nil, keyEquivalent: ""); chHdr.isEnabled = false
         menu.addItem(chHdr)
+        channelItems = []   // ссылки на пункты каналов для live-обновления при смене устройства
         // 4 channels separately, each a clickable toggle; red = connect failed
         addChannel(menu, "USB (cable) — files + commands", state.usbAdb, "usb", #selector(toggleUSB),
                    "Cable (adb). File push/pull + commands (pm, scrcpy, logcat). Click to reconnect (re-enumerate). If the port is asleep, replug the DATA cable.")
@@ -589,8 +592,9 @@ SPEED CHEAT-SHEET
         state.wd5555  = devs.contains { $0.model == model && $0.serial.contains(":5555") }
         state.wdMdns  = devs.contains { $0.model == model && $0.kind == "Wi-Fi" && !$0.serial.contains(":5555") }
         state.wifiSsh = state.wifiSsh && devs.contains { $0.model == model && $0.kind == "Wi-Fi" }
-        // галочки обновляем ВЖИВУЮ (меню остаётся открытым, т.к. клик по view)
+        // галочки устройств + точки каналов обновляем ВЖИВУЮ (меню открыто)
         for row in deviceRows { row.button.title = (row.model == model ? "✓ " : "    ") + row.display }
+        refreshChannelItems()
         // сохраняем выбор (модель) + фоновый рефреш для точности (каналы перерисуются при переоткрытии)
         runCmd("printf '%s' \"$1\" > ~/.phone_active_model", [model]) { [weak self] _, _ in
             self?.scheduleBackgroundRefresh()
@@ -704,6 +708,31 @@ RULE:
             it.attributedTitle = NSAttributedString(string: title, attributes: [.foregroundColor: NSColor.systemRed])
         }
         menu.addItem(it)
+        channelItems.append((key: key, text: text, item: it))
+    }
+
+    func channelWorking(_ key: String) -> Bool {
+        switch key {
+        case "usb":     return state.usbAdb
+        case "ssh":     return state.wifiSsh
+        case "wdmdns":  return state.wdMdns
+        case "tcp5555": return state.wd5555
+        default:        return false
+        }
+    }
+    // перерисовать точки каналов в УЖЕ ОТКРЫТОМ меню (после смены устройства)
+    func refreshChannelItems() {
+        for c in channelItems {
+            let working = channelWorking(c.key)
+            let dot = working ? "🟢" : (failed.contains(c.key) ? "🔴" : "⚪️")
+            let title = "  \(dot) \(c.text)"
+            if !working && failed.contains(c.key) {
+                c.item.attributedTitle = NSAttributedString(string: title, attributes: [.foregroundColor: NSColor.systemRed])
+            } else {
+                c.item.attributedTitle = nil
+                c.item.title = title
+            }
+        }
     }
 
     // ---- channel toggles: touch ONLY their own channel, never the working ones ----
