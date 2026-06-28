@@ -592,21 +592,33 @@ SPEED CHEAT-SHEET
         let i = sender.tag
         guard i >= 0 && i < deviceRows.count else { return }
         let model = deviceRows[i].model
-        // мгновенно обновляем кэш-каналы
         let devs = state.devices
+        // СНАЧАЛА сохраняем выбор СИНХРОННО — чтобы active_ip ниже резолвил уже НОВОЕ устройство
+        let activeModelPath = NSString(string: "~/.phone_active_model").expandingTildeInPath
+        try? model.write(toFile: activeModelPath, atomically: true, encoding: .utf8)
         state.activeModel = model
         state.model = model
         state.usbAdb  = devs.contains { $0.model == model && $0.kind == "USB" }
         state.wd5555  = devs.contains { $0.model == model && $0.serial.contains(":5555") }
         state.wdMdns  = devs.contains { $0.model == model && $0.kind == "Wi-Fi" && !$0.serial.contains(":5555") }
-        state.wifiSsh = state.wifiSshRaw && devs.contains { $0.model == model && $0.kind == "Wi-Fi" }
-        // ПЕРЕСТРАИВАЕМ ВСЁ меню под выбранное устройство вживую (каналы, маунт-секции,
-        // заголовки, галочка) — меню остаётся открытым, т.к. клик был по view-кнопке.
+        // SSH НЕЛЬЗЯ доверять старому wifiSshRaw (он от прошлого устройства) → серый,
+        // пока асинхронная проверка реального IP нового устройства не подтвердит.
+        state.wifiSshRaw = false
+        state.wifiSsh = false
+        // перестроить меню под выбранное устройство вживую (меню остаётся открытым)
         if let m = statusItem.menu { menuNeedsUpdate(m) }
-        // сохраняем выбор (модель) + фоновый рефреш для точности
-        runCmd("printf '%s' \"$1\" > ~/.phone_active_model", [model]) { [weak self] _, _ in
-            self?.scheduleBackgroundRefresh()
+        // АСИНХРОННО: реальная доступность SSH именно НОВОГО устройства (active_ip)
+        DispatchQueue.global().async { [weak self] in
+            guard let self = self else { return }
+            let ok = self.wifiSshOn()
+            DispatchQueue.main.async {
+                guard self.state.activeModel == model else { return }   // не перетереть, если уже переключили дальше
+                self.state.wifiSshRaw = ok
+                self.state.wifiSsh = ok && self.state.devices.contains { $0.model == model && $0.kind == "Wi-Fi" }
+                self.refreshChannelItems()
+            }
         }
+        scheduleBackgroundRefresh()
     }
 
     // FIX #2: serial passed as positional $1 to avoid shell injection
