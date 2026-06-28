@@ -17,10 +17,19 @@ no(){   printf "  \033[31mFAIL\033[0m %s\n" "$1"; FAIL=$((FAIL+1)); }
 skip(){ printf "  \033[33mSKIP\033[0m %s\n" "$1"; SKIP=$((SKIP+1)); }
 hdr(){  printf "\n== %s ==\n" "$1"; }
 
-# сохранить выбор устройства и восстановить в конце
+# сохранить выбор устройства и восстановить + полный cleanup даже при Ctrl-C/падении
 SAVED_MODEL=$(active_model)
-restore(){ if [ -n "$SAVED_MODEL" ]; then printf '%s' "$SAVED_MODEL" > "$PHONE_ACTIVE_FILE"; else rm -f "$PHONE_ACTIVE_FILE"; fi; }
-trap restore EXIT
+STREAM_PORT=8973
+cleanup(){
+  if [ -n "$SAVED_MODEL" ]; then printf '%s' "$SAVED_MODEL" > "$PHONE_ACTIVE_FILE"; else rm -f "$PHONE_ACTIVE_FILE"; fi
+  pkill -f "rclone serve http.*:$STREAM_PORT" 2>/dev/null
+  rm -f /tmp/test-chunk.bin /tmp/test-stream.log /tmp/test-up-*.txt
+  # тестовый keepalive (если тест 12 был прерван на середине)
+  if [ "${KEEPALIVE_TEST_RUNNING:-0}" = 1 ]; then
+    pkill -f phone-keepalive.sh 2>/dev/null; rmdir /tmp/phone-keepalive.lock 2>/dev/null; pkill -f "caffeinate -ism" 2>/dev/null
+  fi
+}
+trap cleanup EXIT INT TERM
 
 IPRE='^[0-9]{1,3}(\.[0-9]{1,3}){3}$'
 
@@ -38,10 +47,12 @@ done
 
 # ───────── 3. _to: таймаут и отсутствие сирот ─────────
 hdr "_to (таймаут-хелпер)"
-t0=$(date +%s); _to 1 sleep 5; rc=$?; t1=$(date +%s)
-if [ "$rc" -ne 0 ] && [ $((t1-t0)) -le 3 ]; then ok "_to 1 sleep 5 прервал за $((t1-t0))с (rc=$rc)"; else no "_to не сработал (rc=$rc, $((t1-t0))с)"; fi
+# уникальный маркер в argv[0], чтобы pgrep ловил ИМЕННО нашу команду, а не чужой системный sleep
+MARK="ps_to_test_$$"
+t0=$(date +%s); _to 1 bash -c "exec -a $MARK sleep 5"; rc=$?; t1=$(date +%s)
+if [ "$rc" -ne 0 ] && [ $((t1-t0)) -le 3 ]; then ok "_to прервал за $((t1-t0))с (rc=$rc)"; else no "_to не сработал (rc=$rc, $((t1-t0))с)"; fi
 sleep 1
-if [ "$(pgrep -c -f 'sleep 5' 2>/dev/null || echo 0)" -eq 0 ]; then ok "сирот sleep не осталось"; else no "остались сироты sleep"; fi
+if [ "$(pgrep -c -f "$MARK" 2>/dev/null || echo 0)" -eq 0 ]; then ok "сирот ($MARK) не осталось"; else no "остались сироты $MARK"; pkill -9 -f "$MARK" 2>/dev/null; fi
 
 # ───────── 4. write_ip_cache: валидация ─────────
 hdr "write_ip_cache (валидация IP)"
@@ -139,11 +150,13 @@ else skip "нет SSH к активному — пропуск download"; fi
 # ───────── 12. keepalive: caffeinate-менеджмент + только USB ─────────
 hdr "keepalive (caffeinate при USB)"
 if [ -n "$(pick_usb)" ]; then
+  KEEPALIVE_TEST_RUNNING=1
   pkill -f phone-keepalive.sh 2>/dev/null; rmdir /tmp/phone-keepalive.lock 2>/dev/null; pkill -f "caffeinate -ism" 2>/dev/null; sleep 1
   nohup bash "$HERE/phone-keepalive.sh" >/dev/null 2>&1 & disown
   sleep 7
   pgrep -f "caffeinate -ism" >/dev/null && ok "caffeinate поднят при подключённом USB" || no "caffeinate не поднялся"
   pkill -f phone-keepalive.sh 2>/dev/null; rmdir /tmp/phone-keepalive.lock 2>/dev/null; pkill -f "caffeinate -ism" 2>/dev/null
+  KEEPALIVE_TEST_RUNNING=0
 else skip "нет USB-устройства — пропуск keepalive"; fi
 
 # ───────── ИТОГ ─────────

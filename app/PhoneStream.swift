@@ -82,7 +82,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             s.usbAdb      = self.usbAdbOn()
             s.wifiSshRaw  = self.wifiSshOn()
             s.wifiSsh     = s.wifiSshRaw
-            s.sshOK       = s.wifiSshRaw   // есть ли sshd у активного (для гейтинга mount/upload/download)
+            // sshOK = доступен ли sshd у активного ЛЮБЫМ путём (Wi-Fi ИЛИ USB-форвард) —
+            // правильный примитив для гейтинга mount/upload/download (а не только Wi-Fi).
+            s.sshOK       = self.sshOkActive()
             s.wdMdns      = self.wdMdnsOn()
             s.wd5555      = self.wd5555On()
             // model: prefer USB device, fall back to any connected device
@@ -132,9 +134,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // FIX #1: autoConnectWD moved here — side-effects belong in background, not in menu drawing
             self.autoConnectWD()
             DispatchQueue.main.async { [weak self] in
-                self?.state = s
+                guard let self = self else { return }
+                // АНТИ-ГОНКА: если за время рефреша пользователь переключил устройство вручную
+                // (deviceRowClicked синхронно меняет state.activeModel), этот рефреш считал
+                // данные СТАРОГО устройства → не затираем свежий выбор. Следующий рефреш (≤4с)
+                // уже посчитает для нового устройства.
+                guard self.state.activeModel.isEmpty || self.state.activeModel == s.activeModel else { return }
+                self.state = s
             }
         }
+    }
+
+    // sshOkActive — есть ли у активного устройства живой sshd (Wi-Fi или USB-форвард)
+    func sshOkActive() -> Bool {
+        sh("source \"\(cfgPath)\" 2>/dev/null; active_ssh_ok").contains("yes")
     }
 
     // ---- keepalive: ping the phone so macOS doesn't suspend the USB port ----
@@ -610,21 +623,24 @@ SPEED CHEAT-SHEET
         state.usbAdb  = devs.contains { $0.model == model && $0.kind == "USB" }
         state.wd5555  = devs.contains { $0.model == model && $0.serial.contains(":5555") }
         state.wdMdns  = devs.contains { $0.model == model && $0.kind == "Wi-Fi" && !$0.serial.contains(":5555") }
-        // SSH НЕЛЬЗЯ доверять старому wifiSshRaw (он от прошлого устройства) → серый,
-        // пока асинхронная проверка реального IP нового устройства не подтвердит.
+        // SSH/sshOK НЕЛЬЗЯ доверять старым значениям (они от прошлого устройства) → всё серое,
+        // пока асинхронная проверка реального устройства не подтвердит. БЕЗ этого меню на один
+        // цикл показало бы Upload/Download/Mount доступными для устройства без sshd.
         state.wifiSshRaw = false
         state.wifiSsh = false
+        state.sshOK = false
         // перестроить меню под выбранное устройство вживую (меню остаётся открытым)
         if let m = statusItem.menu { menuNeedsUpdate(m) }
-        // АСИНХРОННО: реальная доступность SSH именно НОВОГО устройства (active_ip)
+        // АСИНХРОННО: реальная доступность SSH именно НОВОГО устройства
         DispatchQueue.global().async { [weak self] in
             guard let self = self else { return }
-            let ok = self.wifiSshOn()
+            let wifiok = self.wifiSshOn()      // для индикатора канала «Wi-Fi SSH»
+            let sshok  = self.sshOkActive()    // для гейтинга mount/upload/download (Wi-Fi ИЛИ USB)
             DispatchQueue.main.async {
                 guard self.state.activeModel == model else { return }   // не перетереть, если уже переключили дальше
-                self.state.wifiSshRaw = ok
-                self.state.sshOK = ok
-                self.state.wifiSsh = ok && self.state.devices.contains { $0.model == model && $0.kind == "Wi-Fi" }
+                self.state.wifiSshRaw = wifiok
+                self.state.sshOK = sshok
+                self.state.wifiSsh = wifiok && self.state.devices.contains { $0.model == model && $0.kind == "Wi-Fi" }
                 self.refreshChannelItems()
                 // SSH-зависимые пункты могли поменять доступность → перерисовать меню
                 if let m = self.statusItem.menu { self.menuNeedsUpdate(m) }
