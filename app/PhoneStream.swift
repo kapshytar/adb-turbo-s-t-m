@@ -259,9 +259,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // дропдаун-список устройств ИНЛАЙН (галочка = активный), дедуп по модели.
         // Всё ниже (каналы и т.д.) привязано к выбранному устройству.
         if state.devices.count > 1 {
-            let hdr = NSMenuItem(title: "Device (✓ = active):", action: nil, keyEquivalent: "")
-            hdr.isEnabled = false
-            menu.addItem(hdr)
+            let devMenu = NSMenu(title: "Device")
             var seenModels = Set<String>()
             for dev in state.devices {
                 if seenModels.contains(dev.model) { continue }
@@ -269,12 +267,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let kinds = Set(state.devices.filter { $0.model == dev.model }.map { $0.kind })
                     .sorted().joined(separator: "+")
                 let isActive = state.devices.contains { $0.model == dev.model && $0.active }
-                let it = NSMenuItem(title: "  \(dev.model) — \(kinds)", action: #selector(selectDevice(_:)), keyEquivalent: "")
+                let it = NSMenuItem(title: "\(dev.model) — \(kinds)", action: #selector(selectDevice(_:)), keyEquivalent: "")
                 it.target = self
                 it.representedObject = dev.serial
                 it.state = isActive ? .on : .off
-                menu.addItem(it)
+                devMenu.addItem(it)
             }
+            // дропдаун: одна строка с текущим выбором, клик раскрывает список
+            let devItem = NSMenuItem(title: "Device: \(state.activeModel.isEmpty ? "—" : state.activeModel)", action: nil, keyEquivalent: "")
+            devItem.submenu = devMenu
+            menu.addItem(devItem)
         }
 
         menu.addItem(.separator())

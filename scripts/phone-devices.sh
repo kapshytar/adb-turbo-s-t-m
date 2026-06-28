@@ -1,50 +1,41 @@
 #!/bin/bash
 # phone-devices.sh — перечислить подключённые adb-устройства.
-# Вывод: по одной строке на устройство, TAB-разделители:
-#   SERIAL<TAB>MODEL<TAB>KIND<TAB>ACTIVE
-# KIND  = USB   если строка содержит маркер usb: в `adb devices -l`
-#         Wi-Fi  иначе
-# ACTIVE = * если серийник совпадает с active_serial(), иначе пусто
-#
-# Используется PhoneStream.app для подменю выбора устройства (adb-уровень).
-# SSH/Wi-Fi-операции (mount-wifi, stream, upload, download) идут на SSH-сервер
-# по закэшированному IP — этот скрипт их НЕ затрагивает.
-
+# Вывод: по строке на устройство, TAB-разделители: SERIAL<TAB>MODEL<TAB>KIND<TAB>ACTIVE
+#   KIND   = USB если в `adb devices -l` есть маркер usb:, иначе Wi-Fi
+#   ACTIVE = * у активного. Активный = выбранный (active_serial); если не выбран —
+#            ДЕФОЛТ первое USB-устройство (иначе первое в списке), чтобы галочка и
+#            привязка каналов в трее работали сразу.
+# Влияет на adb-уровень (USB-mount, scrcpy, cache). SSH/Wi-Fi-операции идут на сервер.
+set -u
 source "$(cd "$(dirname "$0")" && pwd)/config.sh"
 
-# Получаем активный серийник один раз
 ACTIVE=$(active_serial)
 
-# adb devices -l: строки вида «SERIAL  device  ...usb:...» или «IP:PORT  device  ...»
-"$ADB" devices -l 2>/dev/null | while IFS= read -r line; do
-  # пропускаем заголовок и пустые строки
+serials=(); models=(); kinds=()
+while IFS= read -r line; do
   [[ "$line" == "List of devices"* ]] && continue
   [[ -z "$line" ]] && continue
-
-  # только строки с «device» в статусе (не unauthorized, offline)
   echo "$line" | grep -qw 'device' || continue
-
-  serial=$(echo "$line" | awk '{print $1}')
-  [ -z "$serial" ] && continue
-
-  # KIND: если строка содержит маркер usb: — USB, иначе Wi-Fi
-  if echo "$line" | grep -q 'usb:'; then
-    kind="USB"
-  else
-    kind="Wi-Fi"
-  fi
-
-  # MODEL: через _to с таймаутом 6 сек; если пусто — серийник
-  model=$(_to 6 "$ADB" -s "$serial" shell getprop ro.product.model 2>/dev/null \
-    | tr -d '\r' | tr -d '\n')
+  serial=$(echo "$line" | awk '{print $1}'); [ -z "$serial" ] && continue
+  if echo "$line" | grep -q 'usb:'; then kind="USB"; else kind="Wi-Fi"; fi
+  model=$(_to 6 "$ADB" -s "$serial" shell getprop ro.product.model 2>/dev/null | tr -d '\r' | tr -d '\n')
   [ -z "$model" ] && model="$serial"
+  serials+=("$serial"); models+=("$model"); kinds+=("$kind")
+done < <("$ADB" devices -l 2>/dev/null)
 
-  # ACTIVE
-  if [ "$serial" = "$ACTIVE" ]; then
-    active_mark="*"
-  else
-    active_mark=""
-  fi
+[ "${#serials[@]}" -eq 0 ] && exit 0
 
-  printf '%s\t%s\t%s\t%s\n' "$serial" "$model" "$kind" "$active_mark"
+# индекс активного
+active_idx=-1
+if [ -n "$ACTIVE" ]; then
+  for i in "${!serials[@]}"; do [ "${serials[$i]}" = "$ACTIVE" ] && { active_idx=$i; break; }; done
+fi
+if [ "$active_idx" -lt 0 ]; then
+  for i in "${!serials[@]}"; do [ "${kinds[$i]}" = "USB" ] && { active_idx=$i; break; }; done
+  [ "$active_idx" -lt 0 ] && active_idx=0
+fi
+
+for i in "${!serials[@]}"; do
+  mark=""; [ "$i" -eq "$active_idx" ] && mark="*"
+  printf '%s\t%s\t%s\t%s\n' "${serials[$i]}" "${models[$i]}" "${kinds[$i]}" "$mark"
 done
