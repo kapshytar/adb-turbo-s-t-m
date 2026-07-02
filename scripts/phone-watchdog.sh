@@ -22,10 +22,14 @@ trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
 log "watchdog START (проактивный stat+reachability)"
 
 force_unmount(){ # $1=mountpoint $2=причина
+  # per-mountpoint lock — не плодить параллельные diskutil unmount force на ту же точку
+  # при серийных промахах (mkdir атомарен между процессами/фоновыми job'ами).
+  local fu_lock="/tmp/phone-watchdog.force_unmount.$(basename "$1").lock"
+  mkdir "$fu_lock" 2>/dev/null || { log "ОТСТРЕЛ $1 ($2) → уже выполняется, пропуск"; return; }
   log "ОТСТРЕЛ $1 ($2) → kill rclone + force-unmount"
   pkill -f "rclone mount.*$1" 2>/dev/null
   # force-unmount в фоне с таймаутом, чтобы сам watchdog не завис
-  ( _to 10 diskutil unmount force "$1" >/dev/null 2>&1; umount -f "$1" >/dev/null 2>&1 ) >/dev/null 2>&1 &
+  ( _to 10 diskutil unmount force "$1" >/dev/null 2>&1; umount -f "$1" >/dev/null 2>&1; rmdir "$fu_lock" 2>/dev/null ) >/dev/null 2>&1 &
 }
 
 idle=0; usb_miss=0; wifi_miss=0

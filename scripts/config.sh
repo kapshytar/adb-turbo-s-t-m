@@ -22,12 +22,14 @@ phone_ip() { cat "$PHONE_IP_CACHE" 2>/dev/null | tr -d '\r'; }
 
 # _to N CMD [ARGS…] — запустить CMD с таймаутом N секунд (macOS без coreutils timeout).
 # Убивает дочерний процесс И watcher-sleep, чтобы не плодить осиротевшие sleep.
+# Также убивает ПОТОМКОВ целевого процесса (например adb внутри `_to N bash script.sh»),
+# иначе они остаются сиротами и могут повесить систему в D-state.
 _to() {
   local t="$1"; shift
   "$@" &
   local p=$!
-  # watcher: через $t секунд убить целевой процесс
-  ( sleep "$t"; kill -9 "$p" 2>/dev/null ) &
+  # watcher: через $t секунд убить целевой процесс и его потомков
+  ( sleep "$t"; pkill -9 -P "$p" 2>/dev/null; kill -9 "$p" 2>/dev/null ) &
   local w=$!
   wait "$p" 2>/dev/null
   local rc=$?
@@ -64,6 +66,39 @@ active_serial() {
   done < <("$ADB" devices 2>/dev/null | awk '$2=="device"{print $1}')
 }
 
+# find_serial KIND [MODEL] — ЕДИНАЯ точка поиска серийника среди подключённых
+# adb-устройств. Один awk-парсер `adb devices -l` (под таймаутом _to 8) вместо
+# копий по разным скриптам.
+#   KIND  = usb  — только USB-вход (в строке `adb devices -l` есть маркер usb:)
+#           wifi — только Wi-Fi-вход (серийник вида ip:port; mDNS-имена с
+#                  пробелами НЕ считаются серийником и не берутся)
+#           any  — любой подключённый (device-статус), без разбора канала
+#   MODEL = опционально.
+#           - не передан вовсе          → берётся active_model (если она задана,
+#                                          ищем строго её; иначе — любая модель)
+#           - передан пустой строкой "" → фильтр по модели ОТКЛЮЧЁН явно (берём
+#                                          первое подходящее по KIND устройство,
+#                                          даже если active_model задана)
+#           - передан непустой          → ищем строго эту модель
+# Модель берём из поля `model:...` в `adb devices -l` (без getprop — быстро),
+# '_' нормализуем в '-', как везде в проекте.
+find_serial() {
+  local kind="$1" model
+  if [ $# -ge 2 ]; then model="$2"; else model=$(active_model); fi
+  _to 8 "$ADB" devices -l 2>/dev/null | awk -v kind="$kind" -v m="$model" '
+    / device / {
+      serial=$1
+      is_usb  = ($0 ~ /usb:/) ? 1 : 0
+      is_wifi = (serial ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$/) ? 1 : 0
+      if (kind=="usb"  && !is_usb)  next
+      if (kind=="wifi" && !is_wifi) next
+      mod=""
+      for (i=2; i<=NF; i++) { if ($i ~ /^model:/) { mod=substr($i,7); gsub(/_/,"-",mod) } }
+      if (m != "" && mod != m) next
+      print serial; exit
+    }'
+}
+
 # active_ip — IP именно АКТИВНОГО устройства (по модели), БЫСТРО:
 # 1) если у активной модели есть wifi-adb вход (ip:port) → берём его IP из adb devices -l;
 # 2) иначе USB-вход активной модели → спрашиваем wlan0;
@@ -73,20 +108,10 @@ active_ip() {
   m=$(active_model)
   if [ -n "$m" ]; then
     # IP wifi-входа активной модели (без getprop — модель из поля model:)
-    ip=$("$ADB" devices -l 2>/dev/null | awk -v m="$m" '
-      / device / {
-        serial=$1; mod=""
-        for(i=2;i<=NF;i++){ if($i ~ /^model:/){ mod=substr($i,7); gsub(/_/,"-",mod) } }
-        if(mod==m && serial ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:/){ split(serial,a,":"); print a[1]; exit }
-      }')
+    ip=$(find_serial wifi "$m" | cut -d: -f1)
     [ -n "$ip" ] && { echo "$ip"; return; }
     # USB-вход активной модели → wlan0
-    us=$("$ADB" devices -l 2>/dev/null | awk -v m="$m" '
-      / device .*usb:/ {
-        serial=$1; mod=""
-        for(i=2;i<=NF;i++){ if($i ~ /^model:/){ mod=substr($i,7); gsub(/_/,"-",mod) } }
-        if(mod==m){ print serial; exit }
-      }')
+    us=$(find_serial usb "$m")
     if [ -n "$us" ]; then
       ip=$(_to 8 "$ADB" -s "$us" shell "ip -f inet addr show wlan0 2>/dev/null" </dev/null 2>/dev/null \
            | awk '/inet /{print $2}' | cut -d/ -f1 | tr -d '\r' | head -1)
@@ -106,8 +131,7 @@ active_ssh_ok() {
   # USB-вход активной модели → проба через ОТДЕЛЬНЫЙ локальный порт 18022 (НЕ 8022 — чтобы не
   # сломать живой USB-маунт, который держит forward 8022). Проверяем rc форварда; чистим за собой.
   local m; m=$(active_model)
-  us=$("$ADB" devices -l 2>/dev/null | awk -v m="$m" '
-    / device .*usb:/ { s=$1; mod=""; for(i=2;i<=NF;i++){if($i ~ /^model:/){mod=substr($i,7);gsub(/_/,"-",mod)}} if(mod==m){print s; exit} }')
+  us=$(find_serial usb "$m")
   if [ -n "$us" ]; then
     "$ADB" -s "$us" forward --remove tcp:18022 >/dev/null 2>&1   # снять возможный протухший
     if _to 6 "$ADB" -s "$us" forward tcp:18022 tcp:8022 >/dev/null 2>&1; then
@@ -127,19 +151,22 @@ adb_dev() {
   pick_usb
 }
 
-# pick_usb — вернуть serial USB-устройства (первое) или пустую строку
-pick_usb() { "$ADB" devices -l 2>/dev/null | awk '/ device / && /usb:/ {print $1}' | head -1; }
+# pick_usb — вернуть serial USB-устройства (первое) или пустую строку.
+# Модель-агностично (НЕ фильтрует по active_model) — глобальный пик по всем
+# подключённым USB-устройствам, как и раньше.
+pick_usb() { find_serial usb ""; }
 
-# pick_wifi — вернуть endpoint Wi-Fi-устройства (adb) или пустую строку
+# pick_wifi — вернуть endpoint Wi-Fi-устройства (adb) или пустую строку.
+# Модель-агностично, как и pick_usb. Сначала уже известный adb Wi-Fi девайс,
+# иначе — пробуем поднять его через mDNS и смотрим снова.
 pick_wifi() {
-  local ep ip
-  # сначала — уже известный adb Wi-Fi девайс
-  ip=$("$ADB" devices -l 2>/dev/null | awk '/ device / && !/usb:/ {print $1}' | grep ':' | head -1)
-  [ -n "$ip" ] && { echo "$ip"; return; }
+  local ep wifi
+  wifi=$(find_serial wifi "")
+  [ -n "$wifi" ] && { echo "$wifi"; return; }
   # попробовать mDNS
   ep=$(_to 8 "$ADB" mdns services 2>/dev/null | awk '/_adb-tls-connect._tcp/{print $NF; exit}')
   if [ -n "$ep" ]; then
     _to 8 "$ADB" connect "$ep" >/dev/null 2>&1
   fi
-  "$ADB" devices -l 2>/dev/null | awk '/ device / && !/usb:/ {print $1}' | grep ':' | head -1
+  find_serial wifi ""
 }

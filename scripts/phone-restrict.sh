@@ -4,13 +4,15 @@
 #   ./phone-restrict.sh lift      -> снять ограничения (сохранив текущие значения)
 #   ./phone-restrict.sh restore   -> вернуть как было (или дефолты)
 set -u
-ADB="$HOME/Library/Android/sdk/platform-tools/adb"
+source "$(cd "$(dirname "$0")" && pwd)/config.sh"
 BK="$HOME/PhoneAsExtStorage/adbfs-rootless/.phone_restrict_backup"
 
-SERIAL=$("$ADB" devices | awk '$2=="device"{print $1}' | grep -v ':' | head -1)
-[ -z "$SERIAL" ] && SERIAL=$("$ADB" devices | awk '$2=="device"{print $1}' | head -1)
+# USB приоритетнее; учитывает active_model (если выбрана — ищем именно её),
+# иначе первое подходящее устройство. См. find_serial() в config.sh.
+SERIAL=$(find_serial usb)
+[ -z "$SERIAL" ] && SERIAL=$(find_serial any)
 [ -z "$SERIAL" ] && { echo "Телефон не найден"; exit 1; }
-S() { "$ADB" -s "$SERIAL" shell "$@"; }
+S() { _to 6 "$ADB" -s "$SERIAL" shell "$@"; }
 
 case "${1:-}" in
   lift)
@@ -34,7 +36,14 @@ case "${1:-}" in
   restore)
     # значения из бэкапа, иначе вменяемые дефолты
     stay=0; scan=1; phantom=true; maxph=32
-    if [ -f "$BK" ]; then . "$BK"; fi
+    # безопасный парсинг бэкапа: НЕ source/eval — только ожидаемые имена вида имя=значение
+    if [ -f "$BK" ]; then
+      while IFS='=' read -r k v; do
+        case "$k" in
+          stay|scan|phantom|maxph) printf -v "$k" '%s' "$v" ;;
+        esac
+      done < "$BK"
+    fi
     # null/пустые -> дефолты
     [ "${stay:-null}" = "null" ] && stay=0
     [ "${scan:-null}" = "null" ] && scan=1

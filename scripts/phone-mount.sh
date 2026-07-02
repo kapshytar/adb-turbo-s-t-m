@@ -55,7 +55,7 @@ mkdir "$LOCK" 2>/dev/null || { echo "Монтирование $LABEL уже ид
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
 
 # ---- уже смонтировано? ----
-if mount | grep -q " $MNT " && ls "$MNT" >/dev/null 2>&1; then
+if mount | grep -q " $MNT " && _to 3 ls "$MNT" >/dev/null 2>&1; then
   echo "Уже смонтировано: $MNT"; exit 0
 fi
 

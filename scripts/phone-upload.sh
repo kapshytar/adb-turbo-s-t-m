@@ -30,6 +30,7 @@ for src in "$@"; do
   "$RCLONE" copy "$src" "$DST" \
     --transfers 8 --multi-thread-streams 4 --multi-thread-cutoff 50M \
     --sftp-chunk-size 4M --sftp-concurrency 64 --ignore-checksum \
+    --contimeout 10s --timeout 30s --low-level-retries 3 \
     --stats 2s --stats-one-line 2>&1 | tail -3
   rc=${PIPESTATUS[0]}; [ "$rc" -ne 0 ] && RC=$rc
 done

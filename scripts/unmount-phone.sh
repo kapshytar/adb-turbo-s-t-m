@@ -1,8 +1,14 @@
 #!/bin/bash
+# FALLBACK (2026-07-02): adbfs-стек — рабочий фолбек (вся ФС телефона, ~/Phone*). Без watchdog, но с таймаутами.
+# Актуальный стек: phone-mount.sh / phone-unmount.sh (rclone).
 # Размонтирует все тома телефона.
+
+# shellcheck source=config.sh
+source "$(cd "$(dirname "$0")" && pwd)/config.sh"
+
 for mnt in "$HOME/Phone" "$HOME/Phone-SD" "$HOME/Phone-System" "$HOME/droid"; do
   if mount | grep -q " $mnt "; then
-    umount "$mnt" 2>/dev/null || diskutil unmount force "$mnt" 2>/dev/null
+    _to 12 umount "$mnt" 2>/dev/null || _to 12 diskutil unmount force "$mnt" 2>/dev/null
     if mount | grep -q " $mnt "; then echo "НЕ размонтировано: $mnt"; else echo "Размонтировано: $mnt"; fi
   fi
 done

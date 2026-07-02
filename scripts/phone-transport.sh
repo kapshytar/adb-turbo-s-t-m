@@ -19,21 +19,8 @@ m=$(active_model)
 
 if [ -n "$m" ]; then
   # ── РЕЖИМ АКТИВНОГО УСТРОЙСТВА ──────────────────────────────────────────
-  # Собрать список подключённых устройств с их моделями из adb devices -l
-  # (поле model: содержит '_', приводим к '-' для сравнения)
-  adb_list=$(_to 8 "$ADB" devices -l 2>/dev/null)
-
   # 1) USB активной модели
-  usb=$(echo "$adb_list" | awk -v m="$m" '
-    / device / && /usb:/ {
-      serial=$1
-      for(i=2;i<=NF;i++) {
-        if ($i ~ /^model:/) {
-          mod=substr($i,7); gsub(/_/,"-",mod)
-          if (mod==m) { print serial; exit }
-        }
-      }
-    }')
+  usb=$(find_serial usb "$m")
   if [ -n "$usb" ]; then
     # обновить кэш Wi-Fi-IP
     ip=$(_to 8 "$ADB" -s "$usb" shell "ip -f inet addr show wlan0 2>/dev/null" </dev/null 2>/dev/null \
@@ -52,16 +39,7 @@ if [ -n "$m" ]; then
   fi
 
   # 3) Wi-Fi adb активной модели
-  wifi_adb=$(echo "$adb_list" | awk -v m="$m" '
-    / device / && !/usb:/ {
-      serial=$1
-      for(i=2;i<=NF;i++) {
-        if ($i ~ /^model:/) {
-          mod=substr($i,7); gsub(/_/,"-",mod)
-          if (mod==m) { print serial; exit }
-        }
-      }
-    }')
+  wifi_adb=$(find_serial wifi "$m")
   if [ -n "$wifi_adb" ]; then
     # sshd мог проснуться — попробуем ещё раз
     if [ -n "${ip:-}" ] && _to 2 nc -z -G2 "$ip" "$PHONE_SSH_PORT" >/dev/null 2>&1; then
@@ -81,7 +59,7 @@ fi
 # ── РЕЖИМ БЕЗ АКТИВНОГО УСТРОЙСТВА (глобальный, как было) ───────────────
 
 # 1) USB — предпочтительно
-usb=$(_to 8 "$ADB" devices -l 2>/dev/null | awk '/ device .*usb:/{print $1; exit}')
+usb=$(find_serial usb "")
 if [ -n "$usb" ]; then
   ip=$(_to 8 "$ADB" -s "$usb" shell "ip -f inet addr show wlan0 2>/dev/null" </dev/null 2>/dev/null \
         | awk '/inet /{print $2}' | cut -d/ -f1 | tr -d '\r' | head -1)

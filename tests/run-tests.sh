@@ -52,7 +52,7 @@ MARK="ps_to_test_$$"
 t0=$(date +%s); _to 1 bash -c "exec -a $MARK sleep 5"; rc=$?; t1=$(date +%s)
 if [ "$rc" -ne 0 ] && [ $((t1-t0)) -le 3 ]; then ok "_to прервал за $((t1-t0))с (rc=$rc)"; else no "_to не сработал (rc=$rc, $((t1-t0))с)"; fi
 sleep 1
-if [ "$(pgrep -c -f "$MARK" 2>/dev/null || echo 0)" -eq 0 ]; then ok "сирот ($MARK) не осталось"; else no "остались сироты $MARK"; pkill -9 -f "$MARK" 2>/dev/null; fi
+if [ "$(pgrep -f "$MARK" 2>/dev/null | wc -l | tr -d ' ')" -eq 0 ]; then ok "сирот ($MARK) не осталось"; else no "остались сироты $MARK"; pkill -9 -f "$MARK" 2>/dev/null; fi
 
 # ───────── 4. write_ip_cache: валидация ─────────
 hdr "write_ip_cache (валидация IP)"

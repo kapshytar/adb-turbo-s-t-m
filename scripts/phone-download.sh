@@ -27,7 +27,8 @@ esac
 echo "Канал: $KIND → $HOST:$PHONE_SSH_PORT  •  цель: $DEST_DIR"
 
 CONN=":sftp,host=${HOST},port=${PHONE_SSH_PORT},user=${PHONE_SSH_USER},key_file=${PHONE_SSH_KEY},shell_type=none:${DEST_DIR}"
-"$RCLONE" copyurl "$URL" "$CONN" --auto-filename --sftp-chunk-size 4M -q 2>&1 | tail -3
+"$RCLONE" copyurl "$URL" "$CONN" --auto-filename --sftp-chunk-size 4M \
+  --contimeout 10s --timeout 30s --low-level-retries 3 -q 2>&1 | tail -3
 rc=${PIPESTATUS[0]}
 [ "$rc" -eq 0 ] && echo "✅ Скачано на телефон → $DEST_DIR" || echo "❌ Не удалось (проверь ссылку и канал)"
 exit "$rc"

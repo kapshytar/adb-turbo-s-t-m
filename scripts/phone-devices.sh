@@ -19,19 +19,26 @@ while IFS= read -r line; do
   [ -z "$model" ] && model="$serial"
   if echo "$line" | grep -q 'usb:'; then kind="USB"; else kind="Wi-Fi"; fi
   serials+=("$serial"); models+=("$model"); kinds+=("$kind")
-done < <("$ADB" devices -l 2>/dev/null)
+done < <(_to 8 "$ADB" devices -l 2>/dev/null)
 
 [ "${#serials[@]}" -eq 0 ] && exit 0
 
-# индекс активного — по МОДЕЛИ (первое устройство выбранной модели), иначе первое USB
+# индекс активного — по МОДЕЛИ (первое устройство выбранной модели через find_serial),
+# иначе первое USB (find_serial usb ""), иначе первое подключённое.
 active_idx=-1
 if [ -n "$ACTIVE_MODEL" ]; then
-  for i in "${!models[@]}"; do [ "${models[$i]}" = "$ACTIVE_MODEL" ] && { active_idx=$i; break; }; done
+  active_serial_hit=$(find_serial any "$ACTIVE_MODEL")
+  if [ -n "$active_serial_hit" ]; then
+    for i in "${!serials[@]}"; do [ "${serials[$i]}" = "$active_serial_hit" ] && { active_idx=$i; break; }; done
+  fi
 fi
 if [ "$active_idx" -lt 0 ]; then
-  for i in "${!kinds[@]}"; do [ "${kinds[$i]}" = "USB" ] && { active_idx=$i; break; }; done
-  [ "$active_idx" -lt 0 ] && active_idx=0
+  active_serial_hit=$(find_serial usb "")
+  if [ -n "$active_serial_hit" ]; then
+    for i in "${!serials[@]}"; do [ "${serials[$i]}" = "$active_serial_hit" ] && { active_idx=$i; break; }; done
+  fi
 fi
+[ "$active_idx" -lt 0 ] && active_idx=0
 
 for i in "${!serials[@]}"; do
   mark=""; [ "$i" -eq "$active_idx" ] && mark="*"

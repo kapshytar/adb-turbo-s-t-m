@@ -15,8 +15,8 @@ mkdir "$LOCK" 2>/dev/null || { echo "keepalive уже запущен"; exit 0; }
 
 log(){ echo "$(date '+%F %T') $*" >> "$LOG"; }
 
-# Ротация лога: если >5МБ → сдвинуть в .1
-if [ -f "$LOG" ] && [ "$(stat -f%z "$LOG" 2>/dev/null || echo 0)" -gt 5242880 ]; then
+# Ротация лога: если >1МБ → сдвинуть в .1
+if [ -f "$LOG" ] && [ "$(stat -f%z "$LOG" 2>/dev/null || echo 0)" -gt 1048576 ]; then
   mv "$LOG" "${LOG}.1"
 fi
 
@@ -38,7 +38,7 @@ stop_caff(){
 trap 'stop_caff; rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
 
 log "keepalive START (pid $$)"
-miss=0; gone=0
+miss=0; gone=0; fail_streak=0
 while sleep 5; do
   # есть ли USB-устройство? (по маркеру usb: в devices -l)
   usb_dev=$(_to 8 "$ADB" devices -l 2>/dev/null | awk '/ device .*usb:/{print $1; exit}')
@@ -47,8 +47,12 @@ while sleep 5; do
     start_caff                      # USB воткнут → не давать компу уснуть
     if _to 8 "$ADB" -s "$usb_dev" shell true >/dev/null 2>&1; then
       miss=0
+      [ "$fail_streak" -gt 0 ] && log "ping restored after $fail_streak fail(s)"
+      fail_streak=0
     else
-      miss=$((miss+1)); log "ping fail #$miss ($usb_dev)"
+      miss=$((miss+1)); fail_streak=$((fail_streak+1))
+      # агрегация: первый fail сразу, затем каждый 12-й (~раз в минуту при интервале 5с)
+      { [ "$fail_streak" -eq 1 ] || [ $((fail_streak % 12)) -eq 0 ]; } && log "ping fail #$fail_streak ($usb_dev)"
       [ "$miss" -ge 2 ] && { _to 8 "$ADB" reconnect >/dev/null 2>&1; log "  adb reconnect"; miss=0; }
     fi
   else
