@@ -28,14 +28,17 @@ _to() {
   local t="$1"; shift
   "$@" &
   local p=$!
-  # watcher: через $t секунд убить целевой процесс и его потомков
-  ( sleep "$t"; pkill -9 -P "$p" 2>/dev/null; kill -9 "$p" 2>/dev/null ) &
+  # watcher: через $t секунд убить целевой процесс и его потомков.
+  # ВАЖНО: stdout/stderr watcher'а → /dev/null, иначе его sleep наследует пайп
+  # и $( _to ... ) блокируется до конца таймаута, даже когда команда давно завершилась.
+  ( sleep "$t"; pkill -9 -P "$p" 2>/dev/null; kill -9 "$p" 2>/dev/null ) >/dev/null 2>&1 &
   local w=$!
   wait "$p" 2>/dev/null
   local rc=$?
-  # завершить watcher и его дочерний sleep
-  kill "$w" 2>/dev/null
+  # завершить watcher: СНАЧАЛА его дочерний sleep (пока PPID жив и pkill -P его видит),
+  # ПОТОМ сам сабшелл — иначе sleep осиротеет и его не найти.
   pkill -P "$w" 2>/dev/null
+  kill "$w" 2>/dev/null
   wait "$w" 2>/dev/null
   return $rc
 }
@@ -82,10 +85,25 @@ active_serial() {
 #           - передан непустой          → ищем строго эту модель
 # Модель берём из поля `model:...` в `adb devices -l` (без getprop — быстро),
 # '_' нормализуем в '-', как везде в проекте.
+# adb_devices_l — `adb devices -l` с кэшем на 2с В РАМКАХ ПРОЦЕССА. Один transport зовёт
+# find_serial до 4 раз; без кэша при протухших offline-TCP-записях это давало ~24с.
+adb_devices_l() {
+  # ФАЙЛОВЫЙ кэш (TTL 2с): find_serial зовётся через $(...) в субшеллах, поэтому
+  # shell-переменная кэша не переживала бы вызов — без файла adb дёргался бы каждый
+  # раз (3×3с=9с на один transport). _to 3: список не должен занимать больше; если adb
+  # завис на протухших TCP-записях — лучше быстро вернуть что есть и уйти на SSH.
+  local cache="/tmp/.phonestream_adbl" age
+  if [ -f "$cache" ]; then age=$(( $(date +%s) - $(stat -f %m "$cache" 2>/dev/null || echo 0) )); else age=999; fi
+  if [ "$age" -ge 2 ]; then
+    _to 3 "$ADB" devices -l 2>/dev/null > "$cache.$$" && mv -f "$cache.$$" "$cache" || rm -f "$cache.$$"
+  fi
+  cat "$cache" 2>/dev/null
+}
+
 find_serial() {
   local kind="$1" model
   if [ $# -ge 2 ]; then model="$2"; else model=$(active_model); fi
-  _to 8 "$ADB" devices -l 2>/dev/null | awk -v kind="$kind" -v m="$model" '
+  adb_devices_l | awk -v kind="$kind" -v m="$model" '
     / device / {
       serial=$1
       is_usb  = ($0 ~ /usb:/) ? 1 : 0
@@ -99,24 +117,37 @@ find_serial() {
     }'
 }
 
+# Кэш IP ПО МОДЕЛИ (чтобы IP одного телефона не затирал другой в общем кэше).
+model_ip_file() { echo "$HOME/.phone_ip_$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
+write_model_ip() {   # model ip — атомарно, с валидацией
+  local m="$1" ip="$2" f
+  [ -n "$m" ] || return
+  [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return
+  f=$(model_ip_file "$m"); echo "$ip" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+read_model_ip() { cat "$(model_ip_file "$1")" 2>/dev/null | tr -d '\r'; }
+
 # active_ip — IP именно АКТИВНОГО устройства (по модели), БЫСТРО:
-# 1) если у активной модели есть wifi-adb вход (ip:port) → берём его IP из adb devices -l;
-# 2) иначе USB-вход активной модели → спрашиваем wlan0;
-# 3) иначе кэш phone_ip. НЕ использует общий кэш, который может быть от ДРУГОГО телефона.
+# 1) wifi-adb вход активной модели (ip:port) из adb devices -l → кэшируем по модели;
+# 2) USB-вход активной модели → wlan0 → кэшируем по модели;
+# 3) КЭШ ПО МОДЕЛИ (телефон доступен только по SSH, в adb его нет);
+# 4) общий кэш phone_ip (последний резерв). Пункт 3 — ключ: IP ДРУГОГО телефона больше не тянется.
 active_ip() {
   local m ip us
   m=$(active_model)
   if [ -n "$m" ]; then
     # IP wifi-входа активной модели (без getprop — модель из поля model:)
     ip=$(find_serial wifi "$m" | cut -d: -f1)
-    [ -n "$ip" ] && { echo "$ip"; return; }
+    [ -n "$ip" ] && { write_model_ip "$m" "$ip"; echo "$ip"; return; }
     # USB-вход активной модели → wlan0
     us=$(find_serial usb "$m")
     if [ -n "$us" ]; then
       ip=$(_to 8 "$ADB" -s "$us" shell "ip -f inet addr show wlan0 2>/dev/null" </dev/null 2>/dev/null \
            | awk '/inet /{print $2}' | cut -d/ -f1 | tr -d '\r' | head -1)
-      [ -n "$ip" ] && { echo "$ip"; return; }
+      [ -n "$ip" ] && { write_model_ip "$m" "$ip"; echo "$ip"; return; }
     fi
+    # телефона нет в adb — берём его ПЕРСОНАЛЬНЫЙ кэш (не чужой)
+    ip=$(read_model_ip "$m"); [ -n "$ip" ] && { echo "$ip"; return; }
   fi
   phone_ip
 }
