@@ -13,6 +13,10 @@ LOG="$HOME/PhoneAsExtStorage/phone-wifi-watchdog.log"
 LOCK=/tmp/phone-wifi-watchdog.lock
 mkdir "$LOCK" 2>/dev/null || exit 0
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
+# ротация: >1MB → оставить хвост (у остальных логгеров так же; без неё лог рос бесконечно)
+if [ -f "$LOG" ] && [ "$(stat -f%z "$LOG" 2>/dev/null || echo 0)" -gt 1048576 ]; then
+  tail -c 262144 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+fi
 log(){ echo "$(date '+%F %T') $*" >> "$LOG"; }
 
 if [ -z "$IP" ]; then
