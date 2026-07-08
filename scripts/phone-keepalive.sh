@@ -41,9 +41,11 @@ log "keepalive START (pid $$)"
 miss=0; gone=0; fail_streak=0; tick=0
 while sleep 5; do
   tick=$((tick+1))
-  # раз в ~минуту пинговать Wi-Fi-adb вход активной модели: не даёт listener'у
-  # Wireless Debugging уснуть (Samsung усыпляет его в простое) + кэшируем порт для reconnect.
-  if [ $((tick % 12)) -eq 0 ]; then
+  # Периодический пинг Wi-Fi-adb входа активной модели: не даёт listener'у Wireless
+  # Debugging уснуть (Samsung усыпляет его в простое) + кэшируем порт для reconnect.
+  # Частота: раз в PHONE_WD_PING_MIN минут (деф. 5 — баланс: пинг чаще = больше
+  # микропробуждений радио телефона; если listener засыпает раньше — уменьшить).
+  if [ $((tick % (12 * ${PHONE_WD_PING_MIN:-5}))) -eq 0 ]; then
     wd=$(find_serial wifi 2>/dev/null)
     if [ -n "$wd" ] && _to 8 "$ADB" -s "$wd" shell true >/dev/null 2>&1; then
       am=$(active_model); [ -n "$am" ] && write_wd_port "$am" "${wd##*:}"
