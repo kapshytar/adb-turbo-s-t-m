@@ -17,3 +17,6 @@ HANDOFF.md
 *.o
 PhoneStream
 *.app/
+
+# кросс-сессионный рабочий лог (не коммитить)
+AGENT_SYNC.md
