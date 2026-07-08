@@ -38,8 +38,17 @@ stop_caff(){
 trap 'stop_caff; rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
 
 log "keepalive START (pid $$)"
-miss=0; gone=0; fail_streak=0
+miss=0; gone=0; fail_streak=0; tick=0
 while sleep 5; do
+  tick=$((tick+1))
+  # раз в ~минуту пинговать Wi-Fi-adb вход активной модели: не даёт listener'у
+  # Wireless Debugging уснуть (Samsung усыпляет его в простое) + кэшируем порт для reconnect.
+  if [ $((tick % 12)) -eq 0 ]; then
+    wd=$(find_serial wifi 2>/dev/null)
+    if [ -n "$wd" ] && _to 8 "$ADB" -s "$wd" shell true >/dev/null 2>&1; then
+      am=$(active_model); [ -n "$am" ] && write_wd_port "$am" "${wd##*:}"
+    fi
+  fi
   # есть ли USB-устройство? (по маркеру usb: в devices -l)
   usb_dev=$(_to 8 "$ADB" devices -l 2>/dev/null | awk '/ device .*usb:/{print $1; exit}')
   if [ -n "$usb_dev" ]; then

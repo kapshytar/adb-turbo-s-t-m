@@ -127,6 +127,19 @@ write_model_ip() {   # model ip — атомарно, с валидацией
 }
 read_model_ip() { cat "$(model_ip_file "$1")" 2>/dev/null | tr -d '\r'; }
 
+# Кэш ПОРТА Wireless Debugging ПО МОДЕЛИ. Порт динамический: живёт до ребута телефона,
+# берётся с экрана WD или запоминается после успешного connect. mDNS-анонса часто НЕТ,
+# поэтому прямой connect на закэшированный порт — основной способ reconnect.
+# ВАЖНО (Samsung): listener WD ЗАСЫПАЕТ; будится открытием самого экрана Wireless debugging.
+wd_port_file()  { echo "$HOME/.phone_wd_port_$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
+write_wd_port() {   # model port — атомарно, с валидацией
+  local m="$1" p="$2" f
+  [ -n "$m" ] || return
+  [[ "$p" =~ ^[0-9]{2,5}$ ]] || return
+  f=$(wd_port_file "$m"); echo "$p" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+read_wd_port() { cat "$(wd_port_file "$1")" 2>/dev/null | tr -d '\r'; }
+
 # active_ip — IP именно АКТИВНОГО устройства (по модели), БЫСТРО:
 # 1) wifi-adb вход активной модели (ip:port) из adb devices -l → кэшируем по модели;
 # 2) USB-вход активной модели → wlan0 → кэшируем по модели;

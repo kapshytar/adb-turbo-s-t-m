@@ -37,6 +37,22 @@ else
   echo "Wi-Fi IP телефона неизвестен — пропускаю попытку подключения по IP."
 fi
 
+#    c) прямой connect на закэшированный порт WD (mDNS часто молчит; порт живёт до ребута).
+#       Порт запоминается в write_wd_port при каждом успешном подключении.
+AM=$(active_model)
+if [ -n "$AM" ] && [ -n "$IP" ]; then
+  WDP=$(read_wd_port "$AM")
+  if [ -n "$WDP" ] && _to 4 nc -z -G1 "$IP" "$WDP" >/dev/null 2>&1; then
+    _to 8 "$ADB" connect "$IP:$WDP" >/dev/null 2>&1
+  fi
+fi
+
+#    запомнить порт WD активного устройства для будущих reconnect без mDNS
+if [ -n "$AM" ]; then
+  WDS=$(find_serial wifi "$AM")
+  [ -n "$WDS" ] && write_wd_port "$AM" "${WDS##*:}"
+fi
+
 # 3) Wi-Fi SSH — проверка (поднять удалённо нельзя; watchdog на телефоне сам держит)
 SSH_OK=no
 if [ -n "$IP" ]; then
@@ -53,7 +69,7 @@ echo "──────── РЕЗУЛЬТАТ ────────"
 U=$(_to 8 "$ADB" devices -l 2>/dev/null | grep 'usb:' | awk '{print $1}')
 [ -n "$U" ] && echo "USB (кабель): $U" || echo "USB: нет (проверь кабель=дата и порт)"
 WC=$(_to 8 "$ADB" devices 2>/dev/null | grep -E ':[0-9]+|_adb-tls' | grep -c device || true)
-[ "${WC:-0}" -gt 0 ] && echo "Wi-Fi adb (Wireless-debug): $WC вход(а)" || echo "Wi-Fi adb: нет (включи Wireless Debugging на телефоне)"
+[ "${WC:-0}" -gt 0 ] && echo "Wi-Fi adb (Wireless-debug): $WC вход(а)" || echo "Wi-Fi adb: нет. Тумблер WD может гореть «вкл», но listener СПИТ — открой на телефоне САМ ЭКРАН Wireless debugging (сервис проснётся, порт виден там же) и запусти меня снова."
 [ "$SSH_OK" = yes ] && echo "Wi-Fi SSH (8022): жив" || echo "Wi-Fi SSH: нет (на телефоне запусти sshd: виджет Start-SSHD)"
 /sbin/mount | grep -q Phone-USB  && echo "Папка USB смонтирована"  || echo "Папка USB не смонтирована"
 /sbin/mount | grep -q Phone-WiFi && echo "Папка Wi-Fi смонтирована" || echo "Папка Wi-Fi не смонтирована"
