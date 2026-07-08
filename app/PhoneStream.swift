@@ -74,6 +74,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // FIX #1: background state refresh — all sh() calls happen off the main thread
     func scheduleBackgroundRefresh() {
         let adbPath = adb
+        let activeModelPath = NSString(string: "~/.phone_active_model").expandingTildeInPath
+        // выбор пользователя на МОМЕНТ старта рефреша (источник истины — файл, не state)
+        let startSel = ((try? String(contentsOfFile: activeModelPath, encoding: .utf8)) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         DispatchQueue.global().async { [weak self] in
             guard let self = self else { return }
             var s = PhoneState()
@@ -118,7 +122,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     devList.append((serial: serial, model: model, kind: kind, active: active))
                 }
                 s.devices = devList
-                s.activeModel = devList.first(where: { $0.active })?.model ?? devList.first?.model ?? s.model
+                // выбранная модель остаётся «активной» в UI, даже если её сейчас нет в adb
+                // (например, доступна только по SSH) — берём выбор из файла как приоритет.
+                s.activeModel = devList.first(where: { $0.active })?.model
+                    ?? (startSel.isEmpty ? (devList.first?.model ?? s.model) : startSel)
                 // Если выбран конкретный девайс — светим ТОЛЬКО его каналы (по модели активного).
                 // Если не выбран — оставляем глобальные значения (как раньше).
                 if let act = devList.first(where: { $0.active }) {
@@ -135,11 +142,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.autoConnectWD()
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                // АНТИ-ГОНКА: если за время рефреша пользователь переключил устройство вручную
-                // (deviceRowClicked синхронно меняет state.activeModel), этот рефреш считал
-                // данные СТАРОГО устройства → не затираем свежий выбор. Следующий рефреш (≤4с)
-                // уже посчитает для нового устройства.
-                guard self.state.activeModel.isEmpty || self.state.activeModel == s.activeModel else { return }
+                // АНТИ-ГОНКА (исправлено): блокируем ТОЛЬКО если пользователь реально переключил
+                // устройство за время рефреша — сравниваем файл выбора на старте и сейчас.
+                // Раньше сравнивали с s.activeModel и, когда выбранный телефон отсутствовал в adb,
+                // guard отбрасывал КАЖДЫЙ рефреш → меню зависало на старом кэше (фантомный USB).
+                let nowSel = ((try? String(contentsOfFile: activeModelPath, encoding: .utf8)) ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard startSel == nowSel else { return }
                 self.state = s
             }
         }

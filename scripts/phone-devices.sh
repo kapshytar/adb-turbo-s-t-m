@@ -21,24 +21,33 @@ while IFS= read -r line; do
   serials+=("$serial"); models+=("$model"); kinds+=("$kind")
 done < <(_to 8 "$ADB" devices -l 2>/dev/null)
 
+# ── SSH-достижимые телефоны, которых НЕТ в adb с живым статусом ──
+# adb-over-5555 часто уходит в offline, mDNS на macOS пуст → телефон-сервер пропадал
+# из пикера, хотя жив по SSH. Берём модели из персональных кэшей IP и проверяем sshd:8022.
+shopt -s nullglob 2>/dev/null
+for f in "$HOME"/.phone_ip_*; do
+  case "$f" in *.tmp) continue;; esac
+  m="${f##*/.phone_ip_}"; [ -n "$m" ] || continue
+  dup=0; for x in "${models[@]:-}"; do [ "$x" = "$m" ] && { dup=1; break; }; done
+  [ "$dup" = 1 ] && continue
+  ip=$(cat "$f" 2>/dev/null | tr -d '\r'); [ -n "$ip" ] || continue
+  _to 2 nc -z -G2 "$ip" 8022 >/dev/null 2>&1 || continue   # только если sshd реально жив
+  serials+=("ssh:$ip"); models+=("$m"); kinds+=("Wi-Fi")
+done
+shopt -u nullglob 2>/dev/null
+
 [ "${#serials[@]}" -eq 0 ] && exit 0
 
-# индекс активного — по МОДЕЛИ (первое устройство выбранной модели через find_serial),
-# иначе первое USB (find_serial usb ""), иначе первое подключённое.
+# индекс активного — по ИМЕНИ МОДЕЛИ (работает и для adb-, и для SSH-строк),
+# иначе первое USB, иначе первое в списке.
 active_idx=-1
 if [ -n "$ACTIVE_MODEL" ]; then
-  active_serial_hit=$(find_serial any "$ACTIVE_MODEL")
-  if [ -n "$active_serial_hit" ]; then
-    for i in "${!serials[@]}"; do [ "${serials[$i]}" = "$active_serial_hit" ] && { active_idx=$i; break; }; done
-  fi
+  for i in "${!models[@]}"; do [ "${models[$i]}" = "$ACTIVE_MODEL" ] && { active_idx=$i; break; }; done
 fi
 if [ "$active_idx" -lt 0 ]; then
-  active_serial_hit=$(find_serial usb "")
-  if [ -n "$active_serial_hit" ]; then
-    for i in "${!serials[@]}"; do [ "${serials[$i]}" = "$active_serial_hit" ] && { active_idx=$i; break; }; done
-  fi
+  for i in "${!kinds[@]}"; do [ "${kinds[$i]}" = "USB" ] && { active_idx=$i; break; }; done
+  [ "$active_idx" -lt 0 ] && active_idx=0
 fi
-[ "$active_idx" -lt 0 ] && active_idx=0
 
 for i in "${!serials[@]}"; do
   mark=""; [ "$i" -eq "$active_idx" ] && mark="*"
