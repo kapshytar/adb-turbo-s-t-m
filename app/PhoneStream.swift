@@ -67,6 +67,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     func applicationWillTerminate(_ note: Notification) {
         refreshTimer?.invalidate()
+        // СНАЧАЛА снять тома: после выхода стражей не будет, а оставшийся сетевой FUSE-том
+        // подвешивает ОС (Activity Monitor/Finder) и рискует D-state. Best-effort с таймаутом
+        // на каждый unmount, чтобы сам выход не завис на мёртвом маунте.
+        let p = Process(); p.launchPath = "/bin/bash"
+        p.arguments = ["-c", """
+        pkill -9 -f 'rclone mount' 2>/dev/null
+        for m in "$HOME/Phone-USB" "$HOME/Phone-WiFi"; do
+          /sbin/mount | grep -q " $m " || continue
+          ( diskutil unmount force "$m" >/dev/null 2>&1 ) & pid=$!
+          ( sleep 8; kill -9 $pid 2>/dev/null ) >/dev/null 2>&1 &
+          wait $pid 2>/dev/null
+          umount -f "$m" >/dev/null 2>&1
+          rmdir "$m" 2>/dev/null
+        done
+        """]
+        try? p.run(); p.waitUntilExit()
         stopKeepalive()
         stopWatchdog()
     }
