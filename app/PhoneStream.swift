@@ -179,12 +179,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let script = (Bundle.main.resourcePath ?? "") + "/phone-watchdog.sh"
         guard FileManager.default.fileExists(atPath: script) else { return }
         let p = Process(); p.launchPath = "/bin/bash"
-        p.arguments = ["-c", "exec bash \"\(script)\""]   // single-instance lock inside the script
+        // как и keepalive: снять предыдущий инстанс через -9 (мог зависнуть в D-state на
+        // мёртвом маунте и не отпускать lock → при перезапуске трея копились дубли) + очистить
+        // lock, затем стартовать один свежий.
+        p.arguments = ["-c", "pkill -9 -f phone-watchdog.sh 2>/dev/null; rmdir /tmp/phone-watchdog.lock 2>/dev/null; exec bash \"\(script)\""]
         try? p.run()
     }
     func stopWatchdog() {
         let p = Process(); p.launchPath = "/bin/bash"
-        p.arguments = ["-c", "pkill -f phone-watchdog.sh 2>/dev/null; rmdir /tmp/phone-watchdog.lock 2>/dev/null"]
+        p.arguments = ["-c", "pkill -9 -f phone-watchdog.sh 2>/dev/null; rmdir /tmp/phone-watchdog.lock 2>/dev/null"]
         try? p.run(); p.waitUntilExit()
     }
 
