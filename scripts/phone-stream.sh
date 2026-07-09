@@ -17,10 +17,16 @@ PY="$HOME/PhoneAsExtStorage/ADBFileExplorer/venv/bin/python3"
 SSHUSER="$PHONE_SSH_USER"
 KEY="$PHONE_SSH_KEY"
 
+# Открывает $url в плеере и блокируется до его закрытия (rc=0) — тогда
+# вызывающий код гасит фоновый стример. Полагаемся на код возврата самого
+# `open` (а не на -d /Applications/App.app — QuickTime Player, например,
+# на новых macOS лежит в /System/Applications, а не в /Applications).
+# Если ни один плеер не нашёлся, открывает в браузере без ожидания (rc=1) —
+# стример остаётся жить до следующего запуска стрима, как раньше.
 open_player(){ url="$1"
-  if [ -d /Applications/IINA.app ]; then open -a IINA "$url"
-  elif [ -d "/Applications/QuickTime Player.app" ]; then open -a "QuickTime Player" "$url"
-  else open "$url"; fi; }
+  open -a IINA "$url" -W 2>/dev/null && return 0
+  open -a "QuickTime Player" "$url" -W 2>/dev/null && return 0
+  open "$url"; return 1; }
 
 T=$(bash "$HERE/phone-transport.sh"); KIND="${T%%|*}"; TGT="${T#*|}"
 echo "транспорт: $KIND ($TGT)"
@@ -41,14 +47,23 @@ serve_rclone(){ # $1=host $2=port
     sleep 0.1
   done
   ENC=$(/usr/bin/python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$BASE")
-  URL="http://127.0.0.1:$PORT/$ENC"; echo "URL: $URL"; open_player "$URL"
+  URL="http://127.0.0.1:$PORT/$ENC"; echo "URL: $URL"
+  if open_player "$URL"; then
+    pkill -f "rclone serve http" 2>/dev/null
+    return 0
+  fi
+  return 1
 }
 
 case "$KIND" in
   usb)
     # форвард на sshd телефона и стрим через rclone (быстрый seek, как у Wi-Fi)
     _to 8 "$ADB" -s "$TGT" forward tcp:8022 tcp:8022 >/dev/null 2>&1
-    serve_rclone 127.0.0.1 8022 ;;
+    if serve_rclone 127.0.0.1 8022; then
+      # НЕ снимать forward, если ~/Phone-USB сейчас смонтирован через
+      # phone-mount.sh — он держит tcp:8022 (тот же порт, см. config.sh).
+      mount | grep -q " $HOME/Phone-USB " || "$ADB" -s "$TGT" forward --remove tcp:8022 >/dev/null 2>&1
+    fi ;;
   wifi-ssh)
     serve_rclone "${TGT%%:*}" "${TGT##*:}" ;;
   wifi-adb)
@@ -60,7 +75,10 @@ case "$KIND" in
       nc -z 127.0.0.1 "$PORT" 2>/dev/null && break
       sleep 0.1
     done
-    URL="http://127.0.0.1:$PORT/"; echo "URL: $URL"; open_player "$URL" ;;
+    URL="http://127.0.0.1:$PORT/"; echo "URL: $URL"
+    if open_player "$URL"; then
+      pkill -f "adb_stream.py" 2>/dev/null
+    fi ;;
   *)
     echo "Телефон недоступен (нет USB и Wi-Fi). Проверь, что он на зарядке/в сети, sshd запущен."; exit 1 ;;
 esac
