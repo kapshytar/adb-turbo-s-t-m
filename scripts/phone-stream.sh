@@ -1,7 +1,9 @@
 #!/bin/bash
 # ЕДИНЫЙ СТРИМЕР с авто-выбором канала. Открывает видео БЕЗ выкачки (HTTP Range) в IINA.
-#   USB / Wi-Fi-adb  → adb_stream.py (range поверх adb exec-out)
-#   Wi-Fi-SSH        → rclone serve http поверх прямого SFTP (range, надёжно)
+#   USB          → rclone serve http поверх sshd телефона через adb forward (быстрый seek;
+#                  требует Termux sshd — без него USB-стрим не работает)
+#   Wi-Fi-SSH    → rclone serve http поверх прямого SFTP (range, надёжно)
+#   Wi-Fi-adb    → adb_stream.py (range поверх adb exec-out; fallback без sshd)
 # Использование: phone-stream.sh "/sdcard/DCIM/Media presence/x.mp4"
 set -u
 [ $# -ge 1 ] || { echo "usage: phone-stream.sh REMOTE_PATH"; exit 2; }
@@ -13,7 +15,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=config.sh
 source "$HERE/config.sh"
 
-PY="$HOME/PhoneAsExtStorage/ADBFileExplorer/venv/bin/python3"
+# adb_stream.py stdlib-only → системного python3 достаточно, venv не нужен
+PY=/usr/bin/python3
+ADB_STREAM="$HERE/adb_stream.py"
+[ -f "$ADB_STREAM" ] || ADB_STREAM="$HOME/PhoneAsExtStorage/adb_stream.py"
 SSHUSER="$PHONE_SSH_USER"
 KEY="$PHONE_SSH_KEY"
 
@@ -69,13 +74,15 @@ case "$KIND" in
   wifi-adb)
     # нет прямого SSH — fallback на adb_stream поверх adb-WD
     pkill -f "adb_stream.py" 2>/dev/null; sleep 0.3
-    nohup "$PY" "$HOME/PhoneAsExtStorage/adb_stream.py" --port "$PORT" "$REMOTE" >/tmp/phone-stream.log 2>&1 & disown
+    nohup "$PY" "$ADB_STREAM" --serial "$TGT" --port "$PORT" "$REMOTE" >/tmp/phone-stream.log 2>&1 & disown
     # poll вместо sleep 2
     for i in $(seq 1 40); do
       nc -z 127.0.0.1 "$PORT" 2>/dev/null && break
       sleep 0.1
     done
-    URL="http://127.0.0.1:$PORT/"; echo "URL: $URL"
+    # имя файла в URL — QuickTime сниффает контейнер из расширения (err -11828 без него)
+    ENC=$(/usr/bin/python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$BASE")
+    URL="http://127.0.0.1:$PORT/$ENC"; echo "URL: $URL"
     if open_player "$URL"; then
       pkill -f "adb_stream.py" 2>/dev/null
     fi ;;

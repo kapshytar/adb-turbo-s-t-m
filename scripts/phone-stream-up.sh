@@ -6,8 +6,7 @@ set -u
 # shellcheck source=config.sh
 source "$(cd "$(dirname "$0")" && pwd)/config.sh"
 
-ADB="$HOME/Library/Android/sdk/platform-tools/adb"
-RCLONE=/usr/local/bin/rclone
+# ADB/RCLONE приходят из config.sh (там же Apple-Silicon-поиск rclone и env-overrides)
 MNT="$HOME/PhoneStream"
 PORT=8022
 

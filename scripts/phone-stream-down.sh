@@ -7,5 +7,6 @@ source "$(cd "$(dirname "$0")" && pwd)/config.sh"
 MNT="$HOME/PhoneStream"
 _to 8 umount "$MNT" 2>/dev/null || _to 12 diskutil unmount force "$MNT" 2>/dev/null
 rm -f /tmp/phonestream.transport 2>/dev/null
-_to 8 "$ADB" forward --remove tcp:8022 2>/dev/null
+# НЕ снимать forward, если ~/Phone-USB смонтирован — он держит тот же tcp:8022 (phone-mount.sh)
+mount | grep -q " $HOME/Phone-USB " || _to 8 "$ADB" forward --remove tcp:8022 2>/dev/null
 if mount | grep -q " $MNT "; then echo "НЕ размонтировано: $MNT"; else echo "Размонтировано: $MNT"; fi
