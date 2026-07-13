@@ -59,9 +59,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startKeepalive()   // keep the USB link hot while the tray runs
         startWatchdog()    // proactive guard: force-unmount before a dead mount wedges the OS
 
-        // FIX #1: prime the cache immediately, then refresh every 4 s
+        // FIX #1: prime the cache immediately, then refresh every 15 s
+        // (реже нельзя бесплатно: SSH-ветка phone-devices.sh шлёт nc-пробу в телефон каждый тик)
         scheduleBackgroundRefresh()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: true) { [weak self] _ in
             self?.scheduleBackgroundRefresh()
         }
     }

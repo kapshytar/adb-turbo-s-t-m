@@ -248,7 +248,7 @@ phone-devices.sh  →  parses `adb devices -l` (model: field, no getprop round-t
                        →  compares against active_model() from ~/.phone_active_model
                        →  emits SERIAL<TAB>MODEL<TAB>KIND<TAB>ACTIVE
 
-PhoneStream.swift  →  runs phone-devices.sh every 4 s in background
+PhoneStream.swift  →  runs phone-devices.sh every 15 s in background
                     →  Device: rows in tray (click = switch, menu stays open)
                     →  channel indicators and mount headers update live on switch
 ```
