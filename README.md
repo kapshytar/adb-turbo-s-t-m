@@ -368,5 +368,5 @@ See [ROADMAP.md](ROADMAP.md).
 
 Scripts and the PhoneStream menubar app (`setup.sh`, `scripts/`, app source) are released under the **MIT License** — see [LICENSE](LICENSE).
 
-adbfs-rootless (upstream) remains GPLv3. Build separately and apply `patch/adbfs-root-env.patch`.
+adbfs-rootless (upstream) remains GPLv3. Our change lives in our fork — see [`components.conf`](components.conf); `scripts/components.sh sync` checks it out, then build it.
 ADBFileExplorer and FileDroid remain GPLv3. Our changes are available in the respective forks.

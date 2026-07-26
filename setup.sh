@@ -622,7 +622,7 @@ optional_launchd() {
   fi
   if [ -z "$adbfs_path" ] || [ ! -x "$adbfs_path" ]; then
     fail "adbfs не найден по пути: ${adbfs_path:-<не указан>}"
-    info "Собери adbfs из upstream + patch/adbfs-root-env.patch, затем запусти setup.sh снова."
+    info "Собери adbfs из нашего форка: scripts/components.sh sync, затем make в adbfs-rootless, затем запусти setup.sh снова."
     return 1
   fi
 
