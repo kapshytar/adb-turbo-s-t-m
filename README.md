@@ -228,10 +228,10 @@ Two interchangeable browsers ship with the tray — **Open FileDroid** (Flutter)
 **Open ADB Explorer** (Python/Qt). Both browse over adb and stream video to IINA; pick whichever
 you prefer. ADBFileExplorer is the one with EXIF photo previews.
 
-> **Known gap:** the streaming fixes of 2026-07 (stream URL carrying the real filename +
-> extension, so QuickTime stops failing with `-11828`) landed in FileDroid and in
-> `scripts/adb_stream.py`, but **not** in the ADBFileExplorer fork — its `Copy stream link`
-> also leaks one HTTP server per link. Prefer FileDroid for streaming until that is ported.
+> **Touching streaming? Read [docs/STREAM_CORE.md](docs/STREAM_CORE.md) first.** There is exactly
+> one range-streaming implementation per runtime (`scripts/adb_stream.py` for Python, one Dart file
+> for FileDroid) — the same bug was already found and fixed three times in three copies. That page
+> also documents `tests/range-probe.sh`, the contract test every implementation must pass.
 
 ```
 ADBFileExplorer (Python/Qt)  or  FileDroid (Flutter)
