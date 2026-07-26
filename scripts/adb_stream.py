@@ -25,8 +25,14 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+class StreamError(RuntimeError):
+    """Talking to the phone failed. Raised instead of exiting, so that GUI
+    callers embedding this module do not get their process killed."""
 
 
 # Chunk size used when copying adb stdout into the HTTP response.
@@ -49,7 +55,7 @@ def list_devices(adb):
             [adb, "devices"], text=True, stderr=subprocess.STDOUT
         )
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        sys.exit(f"Failed to run adb ({adb}): {e}")
+        raise StreamError(f"Failed to run adb ({adb}): {e}")
 
     serials = []
     for line in out.splitlines()[1:]:  # skip the "List of devices attached" header
@@ -67,7 +73,7 @@ def pick_serial(adb):
     host:port serial."""
     serials = list_devices(adb)
     if not serials:
-        sys.exit(
+        raise StreamError(
             "No online adb devices found. Connect your phone, enable USB "
             "debugging, and run `adb devices` to verify."
         )
@@ -84,14 +90,14 @@ def get_file_size(adb, serial, remote_path):
     try:
         out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT).strip()
     except subprocess.CalledProcessError as e:
-        sys.exit(
+        raise StreamError(
             f"Could not stat remote file '{remote_path}':\n{e.output}\n"
             "Check the path exists on the phone and is readable."
         )
     try:
         return int(out)
     except ValueError:
-        sys.exit(
+        raise StreamError(
             f"Could not parse file size from stat output: {out!r}\n"
             "Check the remote path is correct."
         )
@@ -273,6 +279,51 @@ class StreamHandler(BaseHTTPRequestHandler):
         self._handle(send_body=False)
 
 
+def _make_handler(adb, serial, remote_path, size):
+    """Build a handler class bound to ONE file.
+
+    Per-server state lives on a fresh subclass rather than on StreamHandler
+    itself, so several servers can run in one process — that is what a GUI
+    needs when it hands out a stream link per file. The CLI uses the same
+    path with a single server.
+    """
+    basename = os.path.basename(remote_path.rstrip("/")) or remote_path
+
+    class _Handler(StreamHandler):
+        pass
+
+    _Handler.adb = adb
+    _Handler.serial = serial
+    _Handler.remote_path = remote_path
+    _Handler.size = size
+    _Handler.ctype = mimetypes.guess_type(basename)[0] or "video/mp4"
+    # имя файла в URL: QuickTime определяет контейнер по расширению (err -11828 без него)
+    _Handler.url_path = "/" + urllib.parse.quote(basename)
+    return _Handler
+
+
+def start_server(remote_path, serial=None, adb=None, port=0, host="127.0.0.1"):
+    """Start a streaming server for `remote_path` on a background thread.
+
+    Returns (url, server). The caller OWNS the server and must eventually call
+    server.shutdown() + server.server_close() — otherwise the listening socket
+    and its thread live until the process exits.
+    port=0 lets the OS pick a free port. Raises StreamError if the phone or the
+    file cannot be reached.
+    """
+    adb = adb or find_adb()
+    serial = serial or pick_serial(adb)
+    size = get_file_size(adb, serial, remote_path)
+    if size <= 0:
+        raise StreamError(f"Remote file '{remote_path}' has size {size}; nothing to stream.")
+
+    handler_cls = _make_handler(adb, serial, remote_path, size)
+    server = ThreadingHTTPServer((host, port), handler_cls)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://{host}:{server.server_address[1]}{handler_cls.url_path}"
+    return url, server
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Stream a phone video over adb to a local HTTP URL with "
@@ -294,36 +345,22 @@ def main():
     )
     args = parser.parse_args()
 
-    adb = args.adb or find_adb()
-    serial = args.serial or pick_serial(adb)
     remote_path = args.remote_path
-
-    size = get_file_size(adb, serial, remote_path)
-    if size <= 0:
-        sys.exit(f"Remote file '{remote_path}' has size {size}; nothing to stream.")
+    try:
+        url, server = start_server(
+            remote_path, serial=args.serial, adb=args.adb, port=args.port
+        )
+    except StreamError as e:
+        sys.exit(str(e))
 
     basename = os.path.basename(remote_path.rstrip("/")) or remote_path
-
-    # Wire the per-request handler with our connection details via class attrs.
-    StreamHandler.adb = adb
-    StreamHandler.serial = serial
-    StreamHandler.remote_path = remote_path
-    StreamHandler.size = size
-    StreamHandler.ctype = mimetypes.guess_type(basename)[0] or "video/mp4"
-    StreamHandler.url_path = "/" + urllib.parse.quote(basename)
-
-    host = "127.0.0.1"
-    server = ThreadingHTTPServer((host, args.port), StreamHandler)
-
-    size_mb = size / (1024 * 1024)
-    url = f"http://{host}:{args.port}{StreamHandler.url_path}"
-    print(f"Streaming {basename}  ({size_mb:.1f} MB)  [device {serial}]")
+    print(f"Streaming {basename}  [device {server.RequestHandlerClass.serial}]")
     print("Open this in a player (QuickTime: File > Open Location, or VLC):")
     print(f"    {url}")
     print("Ctrl+C to stop.")
 
     try:
-        server.serve_forever()
+        threading.Event().wait()   # сервер крутится в своём потоке
     except KeyboardInterrupt:
         print("\nStopping.")
     finally:
