@@ -214,7 +214,10 @@ class StreamHandler(BaseHTTPRequestHandler):
         # Only serve the single file: at "/" or at "/<basename>" (the URL
         # carries the real filename so QuickTime can sniff the container from
         # the extension; the path has no filesystem meaning).
-        if self.path not in ("/", self.url_path):
+        # Strip the query string first: players/proxies may append "?..." and
+        # an exact match on self.path would 404 on an otherwise valid request.
+        req_path = urllib.parse.urlsplit(self.path).path
+        if req_path not in ("/", self.url_path):
             self.send_error(404, "Not Found")
             return
 
