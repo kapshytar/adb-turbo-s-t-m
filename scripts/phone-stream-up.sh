@@ -31,9 +31,9 @@ if mount | grep -q " $MNT "; then diskutil unmount force "$MNT" >/dev/null 2>&1;
 rmdir "$MNT" 2>/dev/null   # ВАЖНО: rmdir, НЕ rm -rf — на смонтированной точке rm -rf удалял бы файлы телефона
 
 # 1) выбрать adb-устройство.
-#    По умолчанию Wi-Fi-ПЕРВЫМ (стабильно для стоящего сервера на настенной зарядке;
-#    не зависит от питания/тока USB-порта Mac). USB — только если форсить (для турбо-передач):
-#    запуск "phone-stream-up.sh usb" или FORCE_USB=1.
+#    ПО УМОЛЧАНИЮ USB-ПЕРВЫМ — ради скорости: USB3 ~175 МБ/с против ~24 МБ/с по Wi-Fi (×7).
+#    Wi-Fi берётся только когда кабеля нет. Явно форсить: "phone-stream-up.sh wifi" (или usb).
+#    (Комментарий тут раньше обещал Wi-Fi-first — это было неверно, код всегда брал USB первым.)
 #    pick_usb/pick_wifi — из config.sh (уже source-нут выше); model-агностичны.
 TRANSPORT="${1:-auto}"
 [ "${FORCE_USB:-}" = "1" ] && TRANSPORT="usb"
