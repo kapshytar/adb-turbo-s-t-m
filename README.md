@@ -91,7 +91,7 @@ The selection persists across tray restarts via `~/.phone_active_model` (stores 
 
 ## What you get
 
-- **File browser** — FileDroid shows directory listings instantly over any channel; no Finder volume needed to browse (the older ADBFileExplorer fork is superseded — see below)
+- **File browser** — ADBFileExplorer or FileDroid shows directory listings instantly over any channel; no Finder volume needed to browse
 - **No-copy streaming** — open videos directly in IINA via HTTP range requests; the file never lands on your Mac
 - **Bulk upload** — rclone/SFTP with 8 parallel streams; ~24 MB/s over Wi-Fi, faster over USB; file picker in the tray
 - **Direct-to-phone download** — paste a URL; rclone fetches it onto the phone bypassing the Mac disk
@@ -224,15 +224,17 @@ Files never leave the phone. IINA seeks via HTTP 206 range requests.
 
 ### File browser (recommended for navigation)
 
-> **Superseded:** the Python/Qt `ADBFileExplorer` fork is no longer maintained here — **FileDroid**
-> (Flutter) replaced it and is the one that gets fixes. Streaming fixes landed in FileDroid and in
-> `scripts/adb_stream.py`; the ADBFileExplorer fork still carries the old QuickTime `-11828`
-> behaviour (stream URL without a file extension) and leaks one HTTP server per copied link.
-> Use FileDroid. The fork is kept only for reference.
+Two interchangeable browsers ship with the tray — **Open FileDroid** (Flutter) and
+**Open ADB Explorer** (Python/Qt). Both browse over adb and stream video to IINA; pick whichever
+you prefer. ADBFileExplorer is the one with EXIF photo previews.
+
+> **Known gap:** the streaming fixes of 2026-07 (stream URL carrying the real filename +
+> extension, so QuickTime stops failing with `-11828`) landed in FileDroid and in
+> `scripts/adb_stream.py`, but **not** in the ADBFileExplorer fork — its `Copy stream link`
+> also leaks one HTTP server per link. Prefer FileDroid for streaming until that is ported.
 
 ```
-FileDroid (Flutter)  ← current
-ADBFileExplorer (Python/Qt)  ← superseded, unmaintained
+ADBFileExplorer (Python/Qt)  or  FileDroid (Flutter)
     └── adb shell ls  [discrete call, 25 s timeout]
         └── USB serial  or  Wi-Fi adb endpoint
 ```
