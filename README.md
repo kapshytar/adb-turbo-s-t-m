@@ -91,7 +91,7 @@ The selection persists across tray restarts via `~/.phone_active_model` (stores 
 
 ## What you get
 
-- **File browser** — ADBFileExplorer shows directory listings instantly over any channel; no Finder volume needed to browse
+- **File browser** — FileDroid shows directory listings instantly over any channel; no Finder volume needed to browse (the older ADBFileExplorer fork is superseded — see below)
 - **No-copy streaming** — open videos directly in IINA via HTTP range requests; the file never lands on your Mac
 - **Bulk upload** — rclone/SFTP with 8 parallel streams; ~24 MB/s over Wi-Fi, faster over USB; file picker in the tray
 - **Direct-to-phone download** — paste a URL; rclone fetches it onto the phone bypassing the Mac disk
@@ -224,8 +224,15 @@ Files never leave the phone. IINA seeks via HTTP 206 range requests.
 
 ### File browser (recommended for navigation)
 
+> **Superseded:** the Python/Qt `ADBFileExplorer` fork is no longer maintained here — **FileDroid**
+> (Flutter) replaced it and is the one that gets fixes. Streaming fixes landed in FileDroid and in
+> `scripts/adb_stream.py`; the ADBFileExplorer fork still carries the old QuickTime `-11828`
+> behaviour (stream URL without a file extension) and leaks one HTTP server per copied link.
+> Use FileDroid. The fork is kept only for reference.
+
 ```
-ADBFileExplorer (Python/Qt)
+FileDroid (Flutter)  ← current
+ADBFileExplorer (Python/Qt)  ← superseded, unmaintained
     └── adb shell ls  [discrete call, 25 s timeout]
         └── USB serial  or  Wi-Fi adb endpoint
 ```

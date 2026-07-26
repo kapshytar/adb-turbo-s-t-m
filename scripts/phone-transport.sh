@@ -14,6 +14,22 @@ source "$(cd "$(dirname "$0")" && pwd)/config.sh"
 # Нормализовать model: заменить '_' → '-' (как в adb devices -l)
 _norm_model() { echo "$1" | tr '_' '-'; }
 
+# usb|SERIAL у нас ВСЕГДА значит «SSH через adb forward» — так его трактуют и
+# stream, и upload, и download. Телефон без Termux sshd по USB для них бесполезен,
+# а раньше USB выигрывал БЕЗУСЛОВНО и уводил канал у живого Wi-Fi-SSH другого
+# устройства (воткнули второй телефон без Termux → стрим умер).
+# Проверяем НЕ `nc -z`: на adb-форварде слушает сам adb, поэтому порт «жив» всегда,
+# даже когда на телефоне никого нет. Настоящий sshd сразу шлёт баннер "SSH-2.0-…".
+usb_ssh_ok(){ # $1=serial
+  _to 8 "$ADB" -s "$1" forward "tcp:${PHONE_SSH_PORT}" tcp:8022 >/dev/null 2>&1
+  [ "$(_to 4 nc -w 2 127.0.0.1 "$PHONE_SSH_PORT" </dev/null 2>/dev/null | head -c 4)" = "SSH-" ] && return 0
+  # форвард поставили мы и он бесполезен — снять, но НЕ трогать, если его
+  # держит смонтированный ~/Phone-USB (тот же порт, см. phone-mount.sh)
+  mount | grep -q " $HOME/Phone-USB " || \
+    _to 5 "$ADB" -s "$1" forward --remove "tcp:${PHONE_SSH_PORT}" >/dev/null 2>&1
+  return 1
+}
+
 # Получить активную модель
 m=$(active_model)
 
@@ -26,7 +42,8 @@ if [ -n "$m" ]; then
     ip=$(_to 8 "$ADB" -s "$usb" shell "ip -f inet addr show wlan0 2>/dev/null" </dev/null 2>/dev/null \
           | awk '/inet /{print $2}' | cut -d/ -f1 | tr -d '\r' | head -1)
     [ -n "$ip" ] && write_ip_cache "$ip"
-    echo "usb|$usb"; exit 0
+    if usb_ssh_ok "$usb"; then echo "usb|$usb"; exit 0; fi
+    # sshd за USB не отвечает (нет Termux) — не занимать канал, пробуем Wi-Fi ниже
   fi
 
   # 2) Wi-Fi SSH — берём IP активного устройства
@@ -64,7 +81,8 @@ if [ -n "$usb" ]; then
   ip=$(_to 8 "$ADB" -s "$usb" shell "ip -f inet addr show wlan0 2>/dev/null" </dev/null 2>/dev/null \
         | awk '/inet /{print $2}' | cut -d/ -f1 | tr -d '\r' | head -1)
   [ -n "$ip" ] && write_ip_cache "$ip"
-  echo "usb|$usb"; exit 0
+  if usb_ssh_ok "$usb"; then echo "usb|$usb"; exit 0; fi
+  # sshd за USB не отвечает (нет Termux) — не занимать канал, пробуем Wi-Fi ниже
 fi
 
 # 2) Прямой SSH по Wi-Fi (надёжный канал)
