@@ -357,6 +357,10 @@ See [ROADMAP.md](ROADMAP.md).
 > Screen mirroring is powered by **scrcpy** — not bundled; the app launches your locally-installed `scrcpy` (offers `brew install scrcpy` if missing).
 
 > **GPLv3 components** (adbfs-rootless, ADBFileExplorer, FileDroid): this repo provides patches and wrappers only. Build from upstream source; do not redistribute the binaries.
+>
+> Which fork and which commit each component is pinned to lives in [`components.conf`](components.conf);
+> `scripts/components.sh sync` installs them on a fresh machine. **Fixes to a component go into that
+> component's fork, never into this repo** — see [docs/COMPONENTS.md](docs/COMPONENTS.md).
 
 ---
 
